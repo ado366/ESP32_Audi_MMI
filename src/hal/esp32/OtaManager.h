@@ -6,11 +6,14 @@
 #include "../../Config.h"
 #include "../../ui/WebUi.h"
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <Update.h>
 #include <HTTPClient.h>
 #include <string>
 #include <functional>
+#include <vector>
+#include <utility>
 
 namespace mmi {
 
@@ -91,29 +94,45 @@ public:
 
   void handle() { if (apUp_) server_.handleClient(); }
 
-  // Join the phone's hotspot and flash a .bin from `url`. Returns false on error
-  // (on success it reboots and does not return).
-  bool pullFromUrl(const std::string& staSsid, const std::string& staPass, const std::string& url) {
+  // Try each (ssid,pass) network in turn; on the first that connects, flash the
+  // .bin from `url`. Returns false if none connect or the download fails (on
+  // success it reboots and does not return).
+  bool pullFromUrl(const std::vector<std::pair<std::string, std::string>>& nets, const std::string& url) {
     WiFi.mode(WIFI_AP_STA);
-    WiFi.begin(staSsid.c_str(), staPass.c_str());
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(200);
-    if (WiFi.status() != WL_CONNECTED) return false;
+    for (const auto& n : nets) {
+      if (n.first.empty()) continue;
+      WiFi.begin(n.first.c_str(), n.second.c_str());
+      uint32_t t0 = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000) delay(200);
+      if (WiFi.status() == WL_CONNECTED) return flash(url);
+      WiFi.disconnect();
+    }
+    return false;
+  }
+  // Backward-compatible single-network form.
+  bool pullFromUrl(const std::string& ssid, const std::string& pass, const std::string& url) {
+    return pullFromUrl({{ssid, pass}}, url);
+  }
 
+private:
+  // Download `url` and flash. Handles GitHub's HTTPS + 302 redirect to its CDN.
+  bool flash(const std::string& url) {
+    WiFiClientSecure client; client.setInsecure();   // GitHub release CDN is HTTPS
     HTTPClient http;
-    http.begin(url.c_str());
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    http.setTimeout(15000);
+    if (!http.begin(client, url.c_str())) return false;
     int code = http.GET();
     if (code != HTTP_CODE_OK) { http.end(); return false; }
     int len = http.getSize();
     if (!Update.begin(len > 0 ? (size_t)len : UPDATE_SIZE_UNKNOWN)) { http.end(); return false; }
-    size_t written = Update.writeStream(*http.getStreamPtr());
+    size_t written = Update.writeStream(http.getStream());
     bool ok = Update.end(true) && (len <= 0 || (int)written == len);
     http.end();
     if (ok) { delay(400); ESP.restart(); }
     return ok;
   }
 
-private:
   bool authed() {
     if (server_.authenticate(user_.c_str(), otaPass_.c_str())) return true;
     server_.requestAuthentication();

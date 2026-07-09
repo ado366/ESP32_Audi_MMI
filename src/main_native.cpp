@@ -200,6 +200,8 @@ int main(int argc, char**) {
     std::snprintf(p.label, 9, "BOOST"); app.presets().add(p); }
   { Preset p; p.ecu = ecu::Dashboard; p.group = 2; p.valueIndex = 3; p.view = View::TopLine;
     p.min = 60; p.max = 120; std::snprintf(p.label, 9, "COOLANT"); app.presets().add(p); }
+  { Preset p; p.ecu = ecu::Engine; p.group = 115; p.valueIndex = 3; p.view = View::Boost;
+    p.min = 0; p.max = 2.5f; std::snprintf(p.label, 9, "BOOST"); app.presets().add(p); }
   app.begin();
   app.tick(nowMs());
 

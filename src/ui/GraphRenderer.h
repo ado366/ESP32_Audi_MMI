@@ -58,6 +58,23 @@ public:
     }
     return bmp;
   }
+
+  // Horizontal bar gauge (FIS-Control turbo style): outlined box filled to `frac`.
+  static std::vector<uint8_t> renderBar(float frac, uint8_t w, uint8_t h) {
+    std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
+    if (w < 3 || h < 3) return bmp;
+    if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+    auto setPx = [&](int x, int y) {
+      if (x < 0 || x >= w || y < 0 || y >= h) return;
+      size_t bit = static_cast<size_t>(y) * w + x;
+      bmp[bit >> 3] |= (0x80 >> (bit & 7));
+    };
+    for (int x = 0; x < w; ++x) { setPx(x, 0); setPx(x, h - 1); }        // top/bottom border
+    for (int y = 0; y < h; ++y) { setPx(0, y); setPx(w - 1, y); }        // left/right border
+    int fillW = static_cast<int>(frac * (w - 2));                        // filled interior
+    for (int x = 1; x <= fillW; ++x) for (int y = 2; y < h - 2; ++y) setPx(x, y);
+    return bmp;
+  }
 };
 
 } // namespace mmi

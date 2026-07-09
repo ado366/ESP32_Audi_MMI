@@ -23,12 +23,21 @@ public:
     return std::string("FW ") + cfg::FW_VERSION + "\n" + ip + "/update (admin)\nSEL=PULL VIA HOTSPOT\nGITHUB LATEST";
   }
   bool pullUpdate() override {
-    // Default to the user's phone hotspot (no text-entry UI yet); NVS overrides.
-    std::string ssid, pass, url;
-    if (!storage_.getString("hotspot.ssid", ssid) || ssid.empty()) ssid = "OnePlus 9 PRO_8492";
-    if (!storage_.getString("hotspot.pass", pass) || pass.empty()) pass = "velkakunda";
-    if (!storage_.getString("ota.url", url) || url.empty()) url = cfg::OTA_URL; // GitHub latest release
-    return ota_.pullFromUrl(ssid, pass, url);   // reboots on success
+    // Try the phone hotspot first, then the home/local network (NVS overrides the
+    // Config defaults). No text-entry UI yet, so credentials come from those.
+    std::string url;
+    if (!storage_.getString("ota.url", url) || url.empty()) url = cfg::OTA_URL;
+
+    std::string hs, hp, ns, np;
+    if (!storage_.getString("hotspot.ssid", hs) || hs.empty()) hs = cfg::HOTSPOT_SSID;
+    if (!storage_.getString("hotspot.pass", hp) || hp.empty()) hp = cfg::HOTSPOT_PASS;
+    if (!storage_.getString("home.ssid", ns) || ns.empty()) ns = cfg::HOME_SSID;
+    if (!storage_.getString("home.pass", np) || np.empty()) np = cfg::HOME_PASS;
+
+    std::vector<std::pair<std::string, std::string>> nets;
+    nets.push_back({hs, hp});
+    if (!ns.empty()) nets.push_back({ns, np});
+    return ota_.pullFromUrl(nets, url);   // reboots on success
   }
 
 private:

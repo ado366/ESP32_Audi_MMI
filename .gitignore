@@ -9,6 +9,9 @@
 *.map
 *.o
 
+# Secrets (WiFi credentials) — never commit, even to a private repo
+src/Secrets.h
+
 # OS / editor
 .DS_Store
 .vscode/

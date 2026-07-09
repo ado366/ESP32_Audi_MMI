@@ -12,6 +12,9 @@ App::App(IDisplay& display, IInputs& inputs, IBluetooth& bt, IStorage& storage, 
   : display_(display), inputs_(inputs), bt_(bt), storage_(storage), diag_(diag),
     menu_(menuRoot()), btMgr_(bt, storage) {}
 
+static const char* kCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -+/.";
+static constexpr int kCharsetLen = 41;
+
 static std::string fmt(const Measurement& m) {
   if (!m.numeric()) return m.text;
   char b[24];
@@ -184,6 +187,15 @@ bool App::handleScreen(Action a) {
     switch (a) {
       case Action::ScrollDown: if (n) { diagPresetIdx_ = (diagPresetIdx_ + 1) % n; graph_.clear(); dirty_ = true; } return true;
       case Action::ScrollUp:   if (n) { diagPresetIdx_ = (diagPresetIdx_ + n - 1) % n; graph_.clear(); dirty_ = true; } return true;
+      case Action::Select:     // cycle this preset's view (TopLine->MultiValue->Graph->Boost) and save
+        if (n) { Preset& p = presets_.at(diagPresetIdx_);
+                 p.view = static_cast<View>(((int)p.view % 4) + 1); // 1..4
+                 presets_.save(storage_); graph_.clear(); dirty_ = true; }
+        return true;
+      case Action::RootBack:   // delete current preset
+        if (n) { presets_.removeAt(diagPresetIdx_); presets_.save(storage_);
+                 if (diagPresetIdx_ >= presets_.size() && diagPresetIdx_ > 0) diagPresetIdx_--; dirty_ = true; }
+        return true;
       case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
       default: return false;
     }
@@ -192,7 +204,21 @@ bool App::handleScreen(Action a) {
     switch (a) {
       case Action::ScrollDown: readGroup_++; graph_.clear(); dirty_ = true; return true;
       case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; graph_.clear(); dirty_ = true; return true;
+      case Action::Select:     startAddFavourite(); return true;   // add current group as a favourite
       case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
+      default: return false;
+    }
+  }
+  if (screen_ == Screen::NamePreset) {
+    switch (a) {
+      case Action::ScrollDown: nameCharIdx_ = (nameCharIdx_ + 1) % kCharsetLen; dirty_ = true; return true;
+      case Action::ScrollUp:   nameCharIdx_ = (nameCharIdx_ + kCharsetLen - 1) % kCharsetLen; dirty_ = true; return true;
+      case Action::Select:     // place the current character, advance
+        if (namePos_ < 8) { nameBuf_[namePos_++] = kCharset[nameCharIdx_]; nameCharIdx_ = 0; }
+        if (namePos_ >= 8) finalizeName();
+        dirty_ = true; return true;
+      case Action::RootBack:   finalizeName(); return true;         // finish early (pad with spaces)
+      case Action::Back:       screen_ = Screen::None; dirty_ = true; return true; // cancel
       default: return false;
     }
   }
@@ -229,6 +255,31 @@ void App::screenSelect() {
     if (listIndex_ < static_cast<int>(e.size())) bt_.dial(e[listIndex_].number);
     screen_ = Screen::None;
   }
+  dirty_ = true;
+}
+
+void App::startAddFavourite() {
+  pendingPreset_ = Preset{};
+  pendingPreset_.ecu = readEcu_;
+  pendingPreset_.group = readGroup_;
+  pendingPreset_.valueIndex = 0;
+  pendingPreset_.view = View::MultiValue;
+  pendingPreset_.min = 0; pendingPreset_.max = 100;
+  for (int i = 0; i < 9; ++i) nameBuf_[i] = 0;
+  namePos_ = 0; nameCharIdx_ = 0;
+  openScreen(Screen::NamePreset);
+}
+
+void App::finalizeName() {
+  while (namePos_ < 8) nameBuf_[namePos_++] = ' ';
+  nameBuf_[8] = 0;
+  // trim trailing spaces for the stored label
+  int end = 8; while (end > 0 && nameBuf_[end - 1] == ' ') --end;
+  for (int i = 0; i < 9; ++i) pendingPreset_.label[i] = 0;
+  for (int i = 0; i < end; ++i) pendingPreset_.label[i] = nameBuf_[i];
+  presets_.add(pendingPreset_);
+  presets_.save(storage_);
+  screen_ = Screen::None;
   dirty_ = true;
 }
 
@@ -323,6 +374,24 @@ void App::renderDiag() {
     return;
   }
 
+  if (view == View::Boost) {
+    float mn = 0, mx = 2.5f;
+    if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
+      const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max;
+    }
+    Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
+    float frac = (mx > mn) ? (m.value - mn) / (mx - mn) : 0.f;
+    auto bar = GraphRenderer::renderBar(frac, 60, 16);
+    display_.beginFullScreen(true);
+    std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
+    display_.drawText(0, 0, kFontCompressedLeft, l);
+    display_.drawText(0, 14, kFontCompressedLeft, "TURBO");
+    display_.drawBitmap(2, 26, 60, 16, bar.data());
+    std::snprintf(l, sizeof(l), "%.1f", mn); display_.drawText(0, 48, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "%.1f BAR", mx); display_.drawText(30, 48, kFontCompressedLeft, l);
+    return;
+  }
+
   if (view == View::Graph) {
     Preset def; float mn = 0, mx = 5000, g1 = -1e9f, g2 = -1e9f;
     if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -395,6 +464,21 @@ void App::renderScreen() {
       const std::string& ln = ring[(total - show + i) % 4];
       display_.drawText(0, static_cast<uint8_t>(36 + i * 8), kFontCompressedLeft, ln.c_str());
     }
+    return;
+  }
+  if (screen_ == Screen::NamePreset) {
+    display_.drawText(0, 0, kFontCentered, "NAME");
+    // Build the name-so-far with the character being chosen shown at the cursor.
+    char shown[10];
+    for (int i = 0; i < 8; ++i)
+      shown[i] = (i < namePos_) ? nameBuf_[i] : (i == namePos_ ? kCharset[nameCharIdx_] : ' ');
+    shown[8] = 0;
+    display_.drawText(4, 20, kFontCentered, shown);
+    // caret under the current position
+    char caret[10]; for (int i = 0; i < 8; ++i) caret[i] = (i == namePos_) ? '^' : ' '; caret[8] = 0;
+    display_.drawText(4, 30, kFontCentered, caret);
+    display_.drawText(0, 50, kFontCompressedLeft, "ROT=CHAR CLK=OK");
+    display_.drawText(0, 60, kFontCompressedLeft, "HOLD=DONE RET=X");
     return;
   }
   if (screen_ == Screen::OneDevice) {

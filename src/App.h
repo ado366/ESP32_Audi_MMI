@@ -35,7 +35,7 @@ private:
   // A leaf screen opened from the menu.
   enum class Screen : uint8_t {
     None, SwitchDevice, Phonebook, MicTest, ButtonMonitor, Bc127Debug,
-    WifiInfo, UpdateInfo, OneDevice,
+    WifiInfo, UpdateInfo, OneDevice, NamePreset,
     DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults
   };
 
@@ -44,6 +44,8 @@ private:
   void onMenuSelect(MenuId id);
   void openScreen(Screen s);
   void screenSelect();
+  void startAddFavourite();
+  void finalizeName();
   void render();
   void renderScreen();
   void renderDiag();
@@ -82,6 +84,11 @@ private:
   bool               faultsLoaded_ = false;
   bool               oneDevice_ = false;     // single-active-device enforcement (persisted)
   uint32_t           lastSample_ = 0;
+  // Add-to-favourites name picker (Maxi-K style)
+  Preset             pendingPreset_;
+  char               nameBuf_[9] = {0};
+  int                namePos_ = 0;
+  int                nameCharIdx_ = 0;
 
   bool     dirty_ = true;
   uint32_t now_ = 0;

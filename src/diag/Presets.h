@@ -10,7 +10,7 @@
 
 namespace mmi {
 
-enum class View : uint8_t { Unused = 0, TopLine, MultiValue, Graph };
+enum class View : uint8_t { Unused = 0, TopLine, MultiValue, Graph, Boost };
 
 struct Preset {
   uint8_t ecu = 0x01;

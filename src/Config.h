@@ -1,15 +1,20 @@
 // Config.h — pin map and compile-time constants for the ESP32 Audi MMI.
 // Pins carried over verbatim from the v1 sketch so existing wiring is unchanged.
 #pragma once
+#include "Secrets.h"   // gitignored WiFi credentials (see Secrets.example.h)
 
 namespace cfg {
 
 // Firmware version (shown on the Version screen + OTA page; bump per release).
-constexpr const char* FW_VERSION = "2.1.0";
+constexpr const char* FW_VERSION = "2.1.1";
 
 // Default pull-OTA source: the "latest" release asset on GitHub. Overridable via
 // the NVS key "ota.url". Publish firmware.bin as a release asset named exactly this.
 constexpr const char* OTA_URL = "https://github.com/ado366/ESP32_Audi_MMI/releases/latest/download/firmware.bin";
+
+// Networks pull-OTA tries (in order) to reach the internet. Credentials live in
+// the gitignored Secrets.h (cfg::HOTSPOT_SSID/PASS, cfg::HOME_SSID/PASS); NVS
+// keys hotspot.ssid/pass and home.ssid/pass override them at runtime.
 
 // Mirror all BC127 UART traffic to the USB debug serial ("[BC127] ...").
 // Off by default; the /bc127 web console + on-cluster BC127 screen still work.
