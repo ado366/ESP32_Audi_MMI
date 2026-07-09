@@ -602,8 +602,23 @@ return true;
 /**
    Send byte out on 3LB port to instrument cluster
 */
+#if defined(ARDUINO_ARCH_ESP32)
+// Protect the bit-banged CLK/DATA edges from interrupts. On the ESP32, WiFi and
+// FreeRTOS interrupts fire constantly; one landing inside a delayMicroseconds()
+// window stretches an edge, the cluster clocks in a wrong bit, the packet fails
+// its checksum and is silently dropped (the row goes blank) even though the
+// per-byte ENA handshake still completes. That is the "random missing rows".
+static portMUX_TYPE s_fisMux = portMUX_INITIALIZER_UNLOCKED;
+#define FIS_BIT_CRITICAL_ENTER() portENTER_CRITICAL(&s_fisMux)
+#define FIS_BIT_CRITICAL_EXIT()  portEXIT_CRITICAL(&s_fisMux)
+#else
+#define FIS_BIT_CRITICAL_ENTER() noInterrupts()
+#define FIS_BIT_CRITICAL_EXIT()  interrupts()
+#endif
+
 void VAGFISWriter::sendByte(uint8_t in_byte) {
     uint8_t tx_byte = 0xff - in_byte;
+    FIS_BIT_CRITICAL_ENTER();   // ~0.5ms; keep the 8-bit edge timing interrupt-free
     for (int8_t i = 7; i >= 0; i--) {//must be signed! need -1 to stop "for"iing
         delayMicroseconds(40);
         switch ((tx_byte & (1 << i)) > 0 ) {
@@ -618,6 +633,7 @@ void VAGFISWriter::sendByte(uint8_t in_byte) {
         setClockHigh();
         delayMicroseconds(FIS_WRITE_PULSEW);
     }
+    FIS_BIT_CRITICAL_EXIT();
     if (__singleENA) delayMicroseconds(80);
 }
 
