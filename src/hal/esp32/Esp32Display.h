@@ -107,21 +107,25 @@ public:
       return;
     }
     if (haveWritten_ && (uint32_t)(now - lastWrite_) < kGapMs) return;
-    lastWrite_ = now; haveWritten_ = true;
     Cmd c = q_.front();
+    bool pop = true;
     switch (c.kind) {
       // A FIS write can be dropped if the cluster's ENA handshake times out. Text
       // draws are XOR, so a failed line must NOT be re-drawn in place (that would
       // erase a row the cluster actually painted). Instead, on ANY failure restart
       // the whole page: initFullScreen clears everything and all rows redraw onto
       // blank — self-correcting, no erase, no partial state.
-      case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); return; } graphics_ = true; break;
+      case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); pop = false; } else graphics_ = true; break;
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); return; } break;
+      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
     }
-    q_.pop_front();
-    if (q_.empty()) redrawFails_ = 0;   // a full page drained cleanly
+    if (pop) { q_.pop_front(); if (q_.empty()) redrawFails_ = 0; } // page drained cleanly
+    // Measure the gap from the END of the (blocking) write: the cluster needs the
+    // full kGapMs to render each row before the next arrives, or it drops rows
+    // even though the write ACKs. Setting lastWrite_ before the write made the
+    // real gap ~2ms shorter and caused random rows to drop each redraw.
+    lastWrite_ = millis(); haveWritten_ = true;
   }
 
 private:
@@ -161,7 +165,7 @@ private:
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
-  static constexpr uint32_t kGapMs       = 5;    // min gap between FIS writes (VAGFISPages DELAY)
+  static constexpr uint32_t kGapMs       = 10;   // gap AFTER each FIS write so the cluster can render it
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
   static constexpr uint32_t kRepaintMs   = 2000; // periodic full repaint to heal dropped rows
