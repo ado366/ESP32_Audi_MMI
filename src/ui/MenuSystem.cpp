@@ -74,10 +74,10 @@ void MenuSystem::render(IDisplay& d) const {
     int i = start + row;
     char line[24];
     std::snprintf(line, sizeof(line), "%c%s", i == sel ? '>' : ' ', lvl.children[i].label);
-    // Compressed font so long labels (+ the '>' marker) fit the 64px width;
-    // selected row inverted for a highlight bar.
+    // Compressed font so long labels (+ the '>' marker) fit the 64px width.
+    // The cluster won't render an inverse highlight, so the '>' marks selection.
     d.drawText(0, static_cast<uint8_t>(16 + row * 8),
-               i == sel ? kFontCompressedInverted : kFontCompressedLeft, line);
+               kFontCompressedLeft, line);
   }
 }
 

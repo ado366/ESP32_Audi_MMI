@@ -346,7 +346,7 @@ void App::renderDiag() {
       if (i < n) std::snprintf(l, sizeof(l), "%c%05u%s", i == listIndex_ ? '>' : ' ', faults_[i].code, faults_[i].sporadic ? " *" : "");
       else       std::snprintf(l, sizeof(l), "%cCLEAR ALL", i == listIndex_ ? '>' : ' ');
       display_.drawText(0, static_cast<uint8_t>(14 + r * 9),
-                        i == listIndex_ ? kFontCompressedInverted : kFontCompressedLeft, l);
+                        kFontCompressedLeft, l);
     }
     // Description of the highlighted fault scrolls along the bottom line.
     if (listIndex_ < n) {
@@ -523,7 +523,7 @@ void App::renderScreen() {
       std::snprintf(line, sizeof(line), "%c%s", i == listIndex_ ? '>' : ' ', phonebook_.entries()[i].name.c_str());
     }
     display_.drawText(0, static_cast<uint8_t>(16 + row * 8),
-                      i == listIndex_ ? kFontCompressedInverted : kFontCompressedLeft, line);
+                      kFontCompressedLeft, line);
   }
 }
 

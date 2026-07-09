@@ -6,15 +6,19 @@
 namespace mmi {
 
 // FIS font byte codes (see VAGFISWriter font notes):
-//   bit0 1=positive/0=negative(inverted), bit2 1=compressed, bit5 1=centered.
-// The screen is fully cleared before each redraw, so XOR (non-wipe) mode is fine
-// and negative renders as an inverted (filled) highlight — matches v1.
+//   bit0 1=positive/0=negative, bit1 1=wipe/0=XOR, bit2 1=compressed, bit5 1=centered.
+// NOTE (verified on this Audi B5 cluster): the "negative" fonts render the text
+// area BLANK rather than as an inverse highlight, and the "wipe" bit garbles text
+// by overlaying. So we use POSITIVE, XOR fonts only; the selected menu row is
+// marked with a '>' prefix instead of a colour inversion. Each op's own strip is
+// cleared before it is redrawn (see Esp32Display), so XOR mode stays clean.
 constexpr uint8_t kFontLeft              = 0x01; // standard, positive, left
 constexpr uint8_t kFontCentered          = 0x21; // standard, positive, centered
-constexpr uint8_t kFontInvertedLeft      = 0x00; // standard, negative, left (highlight)
 constexpr uint8_t kFontCompressedLeft    = 0x05; // compressed, positive, left
 constexpr uint8_t kFontCompressedCenter  = 0x25; // compressed, positive, centered
-constexpr uint8_t kFontCompressedInverted= 0x04; // compressed, negative, left (highlight)
+// Kept for reference only — do NOT use, these render blank on this cluster:
+constexpr uint8_t kFontInvertedLeft      = 0x00; // standard, negative, left
+constexpr uint8_t kFontCompressedInverted= 0x04; // compressed, negative, left
 
 class IDisplay {
 public:
