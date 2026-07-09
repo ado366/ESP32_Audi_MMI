@@ -63,27 +63,14 @@ public:
       return;
     }
 
-    // full-screen graphics mode
-    const auto& n = rec_.ops();
-    const auto& o = sent_.ops();
-    bool structural = !haveSent_ || sent_.mode() != "full" || !graphics_ || n.size() != o.size();
-    if (!structural)
-      for (size_t i = 0; i < n.size(); ++i) if (!n[i].sameSlot(o[i])) { structural = true; break; }
-
-    if (structural) {
-      q_.clear();
-      q_.push_back({Cmd::Init, {}, ""});
-      for (const auto& op : n) q_.push_back({Cmd::Draw, op, ""});
-    } else {
-      for (size_t i = 0; i < n.size(); ++i) {
-        bool changed = (n[i].t == 't') ? (n[i].s != o[i].s || n[i].f != o[i].f) : (n[i].s != o[i].s);
-        if (!changed) continue;
-        FrameOp op = n[i];
-        // pad text to the old length so the wiping font clears longer previous text
-        if (op.t == 't') while (op.s.size() < o[i].s.size()) op.s.push_back(' ');
-        q_.push_back({Cmd::Draw, op, ""});
-      }
-    }
+    // Full-screen graphics mode. The FIS doesn't reliably overwrite text in place
+    // (no working wipe bit), so on ANY change clear the whole screen and redraw.
+    // The frame-level diff below still skips identical frames (no flashing when
+    // nothing changed); we only pay a redraw on a real change.
+    if (haveSent_ && sent_.mode() == "full" && graphics_ && framesEqual(rec_, sent_)) return;
+    q_.clear();
+    q_.push_back({Cmd::Init, {}, ""});
+    for (const auto& op : rec_.ops()) q_.push_back({Cmd::Draw, op, ""});
     commit();
   }
 
@@ -106,6 +93,15 @@ private:
   struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
 
   void commit() { sent_ = rec_; haveSent_ = true; }
+
+  static bool framesEqual(const FrameRecorder& a, const FrameRecorder& b) {
+    if (a.ops().size() != b.ops().size()) return false;
+    for (size_t i = 0; i < a.ops().size(); ++i) {
+      const FrameOp& x = a.ops()[i]; const FrameOp& y = b.ops()[i];
+      if (!x.sameSlot(y) || x.t != y.t || x.f != y.f || x.s != y.s) return false;
+    }
+    return true;
+  }
 
   void drawOp(const FrameOp& op) {
     if (op.t == 't') {
