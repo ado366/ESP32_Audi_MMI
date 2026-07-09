@@ -5,7 +5,7 @@
 namespace cfg {
 
 // Firmware version (shown on the Version screen + OTA page; bump per release).
-constexpr const char* FW_VERSION = "2.1.5";
+constexpr const char* FW_VERSION = "2.1.6";
 
 // Default pull-OTA source: the "latest" release asset on GitHub. Overridable via
 // the NVS key "ota.url". Publish firmware.bin as a release asset named exactly this.

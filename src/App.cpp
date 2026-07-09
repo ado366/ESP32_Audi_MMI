@@ -569,7 +569,8 @@ void App::render() {
     std::string dev = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName)
                                 : "NO PHONE";
     scrolling_ = dev.size() > kWin;   // scroll long phone names
-    display_.showTopLines(st.playing ? "PLAYING " : "PAUSED  ", marquee(dev).c_str());
+    // Short lines (<8) are auto-centred by the FIS; keep PLAYING/PAUSED un-padded.
+    display_.showTopLines(st.playing ? "PLAYING" : "PAUSED", marquee(dev).c_str());
   }
 }
 

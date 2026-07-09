@@ -1,8 +1,10 @@
-// Esp32Display.h — IDisplay over VAGFISWriter, with frame diffing.
-// Draw calls only RECORD a frame; flush() compares it to the last frame sent and
-// writes ONLY the changed regions to the slow FIS bus. This removes the whole-
-// screen re-init/redraw every frame (flashing) and exits graphics mode cleanly
-// when returning to the radio-text lines (so closing the menu updates at once).
+// Esp32Display.h — IDisplay over VAGFISWriter, with frame diffing and a
+// NON-BLOCKING, millis-paced write queue.
+//
+// Draw calls only RECORD a frame. flush() diffs it against the last frame and
+// enqueues the FIS commands for just the changed regions. service(now) sends at
+// most one queued command per kGapMs (the slow FIS bus needs a gap between
+// writes) — no delay(), so the main loop keeps running.
 #pragma once
 #include "../IDisplay.h"
 #include "../../Config.h"
@@ -11,6 +13,7 @@
 #include <Arduino.h>
 #include <cstring>
 #include <string>
+#include <deque>
 
 namespace mmi {
 
@@ -42,22 +45,21 @@ public:
 
   std::string toJson() const { return rec_.toJson(); }
 
-  // Send the minimal set of changes for the current frame to the FIS.
+  // Diff the current frame and enqueue commands for the changed regions.
   void flush() {
     if (rec_.mode() == "top") {
-      if (!haveSent_ || sent_.mode() != "top" || sent_.top1() != rec_.top1() || sent_.top2() != rec_.top2()) {
-        if (graphics_) { fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; } // leave graphics -> radio text
-        char buf[17]; memset(buf, ' ', 16); buf[16] = 0;
-        for (int i = 0; i < 8 && i < (int)rec_.top1().size(); ++i) buf[i] = rec_.top1()[i];
-        for (int i = 0; i < 8 && i < (int)rec_.top2().size(); ++i) buf[8 + i] = rec_.top2()[i];
-        // The FIS centres lines shorter than 8 chars. For full/scrolling lines
-        // (>=8 chars) set the last char to 0x1C (blank, non-space) so the line is
-        // treated as full-width and stays LEFT-aligned — no jump while scrolling.
-        if ((int)rec_.top1().size() >= 8 && buf[7]  == ' ') buf[7]  = 0x1C;
-        if ((int)rec_.top2().size() >= 8 && buf[15] == ' ') buf[15] = 0x1C;
-        fis_.sendMsg(buf);
-        commit();
-      }
+      if (haveSent_ && sent_.mode() == "top" && sent_.top1() == rec_.top1() && sent_.top2() == rec_.top2()) return;
+      q_.clear();
+      if (graphics_) q_.push_back({Cmd::ExitGfx, {}, ""});
+      // Build the 16-char radio message. The FIS auto-centres lines under 8 chars;
+      // for full/scrolling lines (>=8) replace spaces with 0x1C so they stay left.
+      std::string buf(16, ' ');
+      for (int i = 0; i < 8 && i < (int)rec_.top1().size(); ++i) buf[i]     = rec_.top1()[i];
+      for (int i = 0; i < 8 && i < (int)rec_.top2().size(); ++i) buf[8 + i] = rec_.top2()[i];
+      if ((int)rec_.top1().size() >= 8) for (int i = 0; i < 8;  ++i) if (buf[i] == ' ') buf[i] = 0x1C;
+      if ((int)rec_.top2().size() >= 8) for (int i = 8; i < 16; ++i) if (buf[i] == ' ') buf[i] = 0x1C;
+      q_.push_back({Cmd::TopLine, {}, buf});
+      commit();
       return;
     }
 
@@ -69,27 +71,45 @@ public:
       for (size_t i = 0; i < n.size(); ++i) if (!n[i].sameSlot(o[i])) { structural = true; break; }
 
     if (structural) {
-      fis_.initFullScreen(); graphics_ = true;
-      for (const auto& op : n) drawOp(op, "");
+      q_.clear();
+      q_.push_back({Cmd::Init, {}, ""});
+      for (const auto& op : n) q_.push_back({Cmd::Draw, op, ""});
     } else {
       for (size_t i = 0; i < n.size(); ++i) {
-        if (n[i].t == 't') { if (n[i].s != o[i].s || n[i].f != o[i].f) drawOp(n[i], o[i].s); }
-        else               { if (n[i].s != o[i].s) drawOp(n[i], ""); }
+        bool changed = (n[i].t == 't') ? (n[i].s != o[i].s || n[i].f != o[i].f) : (n[i].s != o[i].s);
+        if (!changed) continue;
+        FrameOp op = n[i];
+        // pad text to the old length so the wiping font clears longer previous text
+        if (op.t == 't') while (op.s.size() < o[i].s.size()) op.s.push_back(' ');
+        q_.push_back({Cmd::Draw, op, ""});
       }
     }
     commit();
   }
 
+  // Send at most one queued command, paced by millis(). Call every loop.
+  void service(uint32_t now) {
+    if (q_.empty()) return;
+    if (haveWritten_ && (uint32_t)(now - lastWrite_) < kGapMs) return;
+    const Cmd& c = q_.front();
+    switch (c.kind) {
+      case Cmd::Init:     fis_.initFullScreen(); graphics_ = true; break;
+      case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
+      case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
+      case Cmd::Draw:     drawOp(c.op); break;
+    }
+    q_.pop_front();
+    lastWrite_ = now; haveWritten_ = true;
+  }
+
 private:
+  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
+
   void commit() { sent_ = rec_; haveSent_ = true; }
 
-  // Draw one op; for text, pad to `oldText` length so the (wiping) font clears
-  // any longer previous text at that slot.
-  void drawOp(const FrameOp& op, const std::string& oldText) {
+  void drawOp(const FrameOp& op) {
     if (op.t == 't') {
-      std::string t = op.s;
-      while (t.size() < oldText.size()) t.push_back(' ');
-      fis_.sendStringFS(op.x, op.y, op.f, String(t.c_str()));
+      fis_.sendStringFS(op.x, op.y, op.f, String(op.s.c_str()));
     } else {
       uint8_t buf[1024];
       int bytes = (op.w * op.h + 7) / 8;
@@ -101,10 +121,13 @@ private:
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
+  static constexpr uint32_t kGapMs = 5;   // min gap between FIS writes
+
   VAGFISWriter fis_;
   FrameRecorder rec_, sent_;
-  bool graphics_ = false;
-  bool haveSent_ = false;
+  std::deque<Cmd> q_;
+  uint32_t lastWrite_ = 0;
+  bool graphics_ = false, haveSent_ = false, haveWritten_ = false;
 };
 
 } // namespace mmi

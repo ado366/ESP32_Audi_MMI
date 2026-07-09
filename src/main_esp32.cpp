@@ -106,7 +106,8 @@ void loop() {
   inputs.update();          // scan encoder + buttons into the event queue
   ota.handle();             // service the OTA web server
   app->tick(millis());      // drive the UI with a real millisecond clock
-  display.flush();          // send only changed regions to the FIS
+  display.flush();          // diff the frame -> queue changed regions
+  display.service(millis()); // send one queued FIS command, millis-paced (non-blocking)
 
   // Serial heartbeat (115200) — quick live check over USB.
   static uint32_t lastHb = 0;
