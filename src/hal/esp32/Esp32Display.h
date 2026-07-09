@@ -16,15 +16,30 @@ public:
 
   void begin() { fis_.begin(); fis_.reset(); }
 
+  // The FIS character ROM is UPPERCASE-only; lowercase and non-ASCII bytes render
+  // as wrong glyphs. Map to the safe set before sending (and before recording, so
+  // the browser mirror matches the cluster).
+  static std::string fisSafe(const char* s) {
+    std::string o;
+    for (const char* p = s; p && *p; ++p) {
+      unsigned char c = static_cast<unsigned char>(*p);
+      if (c >= 0x80 || c < 0x20) { o.push_back(' '); continue; } // non-ASCII / control
+      if (c >= 'a' && c <= 'z') c -= 32;                          // uppercase
+      o.push_back(static_cast<char>(c));
+    }
+    return o;
+  }
+
   // Radio-text area: two 8-char lines via the 0x81 message.
   void showTopLines(const char* line1, const char* line2) override {
+    std::string l1 = fisSafe(line1), l2 = fisSafe(line2);
     char buf[17];
     memset(buf, ' ', 16); buf[16] = 0;
-    if (line1) for (int i = 0; i < 8 && line1[i]; ++i) buf[i] = line1[i];
-    if (line2) for (int i = 0; i < 8 && line2[i]; ++i) buf[8 + i] = line2[i];
+    for (int i = 0; i < 8 && i < (int)l1.size(); ++i) buf[i] = l1[i];
+    for (int i = 0; i < 8 && i < (int)l2.size(); ++i) buf[8 + i] = l2[i];
     fis_.sendMsg(buf);
     graphics_ = false;
-    rec_.topLines(line1, line2);
+    rec_.topLines(l1.c_str(), l2.c_str());
   }
 
   void beginFullScreen(bool clear) override {
@@ -35,8 +50,9 @@ public:
   void clear() override { fis_.initFullScreen(); rec_.clear(); }
 
   void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) override {
-    fis_.sendStringFS(x, y, font, String(text ? text : ""));
-    rec_.text(x, y, font, text);
+    std::string t = fisSafe(text);
+    fis_.sendStringFS(x, y, font, String(t.c_str()));
+    rec_.text(x, y, font, t.c_str());
   }
   void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* data) override {
     fis_.GraphicFromArray(x, y, w, h, data, 1);
