@@ -568,7 +568,7 @@ void App::render() {
   } else {
     scrolling_ = false;
     display_.showTopLines(st.playing ? "PLAYING " : "PAUSED  ",
-                          st.activeDeviceName.empty() ? "NO DEV  " : st.activeDeviceName.c_str());
+                          st.activeDeviceName.empty() ? "NO PHONE" : st.activeDeviceName.c_str());
   }
 }
 

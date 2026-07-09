@@ -10,6 +10,7 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <HTTPClient.h>
+#include <ESPmDNS.h>
 #include <string>
 #include <functional>
 #include <vector>
@@ -20,10 +21,16 @@ namespace mmi {
 class OtaManager {
 public:
   void beginAp(const std::string& ssid, const std::string& pass,
-               const std::string& user, const std::string& otaPass) {
+               const std::string& user, const std::string& otaPass,
+               const std::string& staSsid = "", const std::string& staPass = "") {
     user_ = user; otaPass_ = otaPass;
-    WiFi.mode(WIFI_AP);
+    // AP always up (192.168.4.1); also join the home network so the UI is
+    // reachable from a computer on that network (in the car the join just fails).
+    WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(ssid.c_str(), pass.c_str());   // WPA2; pass must be >= 8 chars
+    if (!staSsid.empty()) WiFi.begin(staSsid.c_str(), staPass.c_str());
+    MDNS.begin("audimmi");                     // http://audimmi.local
+    MDNS.addService("http", "tcp", 80);
 
     server_.on("/", HTTP_GET, [this]() {
       if (!authed()) return;
@@ -93,6 +100,8 @@ public:
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
 
   void handle() { if (apUp_) server_.handleClient(); }
+  // Home-network IP once joined ("0.0.0.0" if not connected).
+  std::string staIP() const { return WiFi.localIP().toString().c_str(); }
 
   // Try each (ssid,pass) network in turn; on the first that connects, flash the
   // .bin from `url`. Returns false if none connect or the download fails (on

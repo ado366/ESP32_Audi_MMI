@@ -15,8 +15,11 @@ public:
 
   std::string wifiInfo() override {
     std::string ssid; if (!storage_.getString("wifi.ssid", ssid)) ssid = "ESP32_MMI";
-    std::string ip = WiFi.softAPIP().toString().c_str();
-    return "AP " + ssid + "\nIP " + ip + "\n/status\n/bc127\n/update";
+    std::string apip = WiFi.softAPIP().toString().c_str();
+    std::string home = ota_.staIP();
+    return "AP " + ssid + "\nAP IP " + apip +
+           "\nHOME " + (home == "0.0.0.0" ? std::string("-") : home) +
+           "\nAUDIMMI.LOCAL\n/control";
   }
   std::string updateInfo() override {
     std::string ip = WiFi.softAPIP().toString().c_str();

@@ -57,11 +57,13 @@ void setup() {
   diag.begin();   // starts the KWP reader task on core 0
 
   // Secured WiFi AP + OTA (credentials from NVS, with safe defaults).
-  std::string ssid, pass, otaPass;
+  std::string ssid, pass, otaPass, homeSsid, homePass;
   if (!storage.getString("wifi.ssid", ssid)) ssid = "ESP32_MMI";
   if (!storage.getString("wifi.pass", pass) || pass.size() < 8) pass = "audimmi2024";
   if (!storage.getString("ota.pass",  otaPass)) otaPass = pass;
-  ota.beginAp(ssid, pass, "admin", otaPass);
+  storage.getString("home.ssid", homeSsid);   // provisioned via USB flash
+  storage.getString("home.pass", homePass);
+  ota.beginAp(ssid, pass, "admin", otaPass, homeSsid, homePass);
 
   // Live-debug hooks (reachable from a phone on the AP at http://192.168.4.1):
   //  /status  -> JSON telemetry,  /bc127 -> raw BC127 command console.
@@ -109,11 +111,11 @@ void loop() {
   if (millis() - lastHb > 1000) {
     lastHb = millis();
     const BtStatus& s = bt.status();
-    Serial.printf("[hb] up=%lus heap=%u link=%d dev=%s play=%d call=%d kwp=%d bc_rx=%lu raw=%d/%d/%d ctx=%d\n",
+    Serial.printf("[hb] up=%lus heap=%u wifi=%s ip=%s link=%d dev=%s play=%d call=%d kwp=%d bc_rx=%lu ctx=%d\n",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
+      WiFi.status() == WL_CONNECTED ? "home" : "ap-only", ota.staIP().c_str(),
       s.linked, s.activeDeviceName.c_str(), s.playing, (int)s.call,
       diag.isConnected(), (unsigned long)bt.rxBytes(),
-      inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
       app ? (int)app->context() : -1);
   }
 }
