@@ -81,16 +81,22 @@ public:
     if (!q_.empty()) return;                    // never interrupt an in-flight redraw
     const auto& ops = rec_.ops();
     uint32_t now = millis();
-    bool changed = !fullValid_ || !opsEqual(ops, drawn_);
-    // The cluster occasionally drops a row over time even though the write ACKs
-    // (fisfail stays 0). A fresh full redraw always paints every row, so repaint
-    // the whole page periodically while idle to heal any dropped rows.
-    bool repaintDue = fullValid_ && (uint32_t)(now - lastRedraw_) >= kRepaintMs;
-    if (!changed && !repaintDue) return;
-    // Bound redraw frequency so a fast scroll doesn't clear+repaint every few ms.
-    if (changed && fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
-    q_.push_back({Cmd::Init, {}, ""});
-    for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
+    if (fullValid_ && opsEqual(ops, drawn_)) return;
+    // Bound redraw frequency so a fast scroll doesn't repaint every few ms.
+    if (fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
+
+    // If the layout is unchanged (same op count/slots) and only left-aligned text
+    // differs — the menu/list scroll case — overwrite just the changed rows using
+    // the WIPE font (no full-screen clear), so scrolling doesn't flash. Any layout
+    // change (screen switch, centered text, bitmap) falls back to clear + redraw.
+    if (sameStructureWipeable(ops)) {
+      for (size_t i = 0; i < ops.size(); ++i)
+        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s)
+          q_.push_back({Cmd::Draw, ops[i], "", true});
+    } else {
+      q_.push_back({Cmd::Init, {}, ""});
+      for (const auto& op : ops) q_.push_back({Cmd::Draw, op, "", false});
+    }
     drawn_ = ops; fullValid_ = true; lastRedraw_ = now;
   }
 
@@ -118,7 +124,7 @@ public:
       case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); pop = false; } else graphics_ = true; break;
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
+      case Cmd::Draw:     if (!drawOp(c.op, c.wipe)) { restartRedraw(); pop = false; } break;
     }
     if (pop) { q_.pop_front(); if (q_.empty()) redrawFails_ = 0; } // page drained cleanly
     // Measure the gap from the END of the (blocking) write: the cluster needs the
@@ -129,7 +135,20 @@ public:
   }
 
 private:
-  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
+  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; bool wipe = false; };
+
+  // True if the new frame has the same layout as the drawn one and every changed
+  // op is a left-aligned text row (so it can be overwritten in place via wipe,
+  // avoiding a full-screen clear/flash).
+  bool sameStructureWipeable(const std::vector<FrameOp>& ops) const {
+    if (!fullValid_ || ops.size() != drawn_.size()) return false;
+    for (size_t i = 0; i < ops.size(); ++i) {
+      if (!ops[i].sameSlot(drawn_[i])) return false;                 // layout moved
+      if (ops[i].f == drawn_[i].f && ops[i].s == drawn_[i].s) continue; // unchanged
+      if (ops[i].t != 't' || (ops[i].f & 0x20)) return false;        // bitmap/centered change
+    }
+    return true;
+  }
 
   // A write in the current full-screen page failed; requeue a clean redraw of the
   // whole page (bounded, so a persistently unresponsive cluster can't thrash).
@@ -150,10 +169,21 @@ private:
     return true;
   }
 
-  // Returns false if the write was dropped (bus busy) so service() can retry.
-  bool drawOp(const FrameOp& op) {
+  // Returns false if the write was dropped so service() can restart the page.
+  // wipe=true overwrites the row in place (wipe font, padded to clear the old
+  // label) instead of relying on a prior full-screen clear — used for flash-free
+  // scroll updates.
+  bool drawOp(const FrameOp& op, bool wipe) {
     if (op.t == 't') {
-      return fis_.sendStringFS(op.x, op.y, op.f, String(op.s.c_str())) != 0;
+      uint8_t font = op.f;
+      std::string s = op.s;
+      if (wipe) {
+        font |= 0x02;                                  // wipe bit: overwrite the cell area
+        int cw = (op.f & 0x04) ? 4 : 6;                // pad to clear the full row width
+        int cells = (64 - op.x) / cw;
+        while ((int)s.size() < cells) s.push_back(' ');
+      }
+      return fis_.sendStringFS(op.x, op.y, font, String(s.c_str())) != 0;
     }
     uint8_t buf[1024];
     int bytes = (op.w * op.h + 7) / 8;
@@ -165,10 +195,9 @@ private:
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
-  static constexpr uint32_t kGapMs       = 10;   // gap AFTER each FIS write so the cluster can render it
+  static constexpr uint32_t kGapMs       = 5;    // gap AFTER each FIS write (VAGFISPages value)
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
-  static constexpr uint32_t kRepaintMs   = 2000; // periodic full repaint to heal dropped rows
   static constexpr uint8_t  kMaxRestarts = 6;    // bound page-redraw restarts on write failure
 
   VAGFISWriter fis_;
