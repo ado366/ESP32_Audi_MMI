@@ -1,5 +1,6 @@
 // App.cpp — core UI loop, hardware-independent.
 #include "App.h"
+#include "Config.h"
 #include "ui/InputRouter.h"
 #include "ui/MenuTree.h"
 #include "ui/GraphRenderer.h"
@@ -161,7 +162,7 @@ void App::handle(Action a) {
 
 int App::screenItemCount() const {
   switch (screen_) {
-    case Screen::SwitchDevice:   return static_cast<int>(btMgr_.paired().size());
+    case Screen::SwitchDevice:   return static_cast<int>(bt_.pairedDevices().size());
     case Screen::Phonebook:      return static_cast<int>(phonebook_.size());
     case Screen::DiagFavourites: return presets_.size();
     case Screen::DiagFaults:     return static_cast<int>(faults_.size());
@@ -178,6 +179,10 @@ bool App::handleScreen(Action a) {
       case Action::Back:       micLoop_ = false; bt_.micLoopback(false); screen_ = Screen::None; dirty_ = true; return true;
       default: return false;
     }
+  }
+  if (screen_ == Screen::Info) {
+    if (a == Action::Back || a == Action::Select) { screen_ = Screen::None; dirty_ = true; }
+    return true; // consume nav
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
@@ -256,8 +261,11 @@ bool App::handleScreen(Action a) {
 
 void App::screenSelect() {
   if (screen_ == Screen::SwitchDevice) {
-    const auto& p = btMgr_.paired();
-    if (listIndex_ < static_cast<int>(p.size())) btMgr_.switchTo(p[listIndex_].mac);
+    auto p = bt_.pairedDevices();
+    if (listIndex_ < static_cast<int>(p.size())) {
+      bt_.connectDevice(p[listIndex_].mac);   // single link enforced downstream
+      btMgr_.onConnected(p[listIndex_].mac);   // persist last-used
+    }
     screen_ = Screen::None;
   } else if (screen_ == Screen::Phonebook) {
     const auto& e = phonebook_.entries();
@@ -299,24 +307,56 @@ void App::openScreen(Screen s) {
 }
 
 void App::onMenuSelect(MenuId id) {
+  const BtStatus& s = bt_.status();
   switch (id) {
-    case MenuId::BtSwitchDevice: openScreen(Screen::SwitchDevice);   break;
+    // ---- Phone / Bluetooth ----
+    case MenuId::BtSwitchDevice: bt_.refreshDevices(); openScreen(Screen::SwitchDevice); break;
     case MenuId::BtPhonebook:    openScreen(Screen::Phonebook);      break;
-    case MenuId::DbgMicTest:     openScreen(Screen::MicTest);        break;
-    case MenuId::DbgButtonMonitor: openScreen(Screen::ButtonMonitor); break;
-    case MenuId::DbgBc127:       openScreen(Screen::Bc127Debug);     break;
-    case MenuId::DbgCalibrate:   inputs_.startCalibration();         break;
-    case MenuId::SetWifi:        openScreen(Screen::WifiInfo);       break;
-    case MenuId::SetUpdate:      openScreen(Screen::UpdateInfo);     break;
+    case MenuId::BtActiveDevice:
+      showInfo("ACTIVE DEV", { s.linked ? (s.activeDeviceName.empty() ? "PHONE" : s.activeDeviceName) : "NO PHONE",
+                               s.activeDeviceMac.empty() ? "" : s.activeDeviceMac });
+      break;
     case MenuId::BtSingleDevice: openScreen(Screen::OneDevice);      break;
+    case MenuId::BtPair:         bt_.sendCommand("BT_STATE ON ON");
+                                 showInfo("PAIR NEW", {"DISCOVERABLE", "PAIR FROM PHONE", "THEN SWITCH DEV"}); break;
+    case MenuId::BtReset:        bt_.sendCommand("RESET"); showInfo("BC127", {"RESETTING..."}); break;
+    case MenuId::BtSettings:     openScreen(Screen::Bc127Debug);     break;  // raw command console
+    case MenuId::BtCalls:
+      showInfo("CALLS", { s.call == CallState::Idle ? "NO ACTIVE CALL" : "IN CALL",
+                          "ENC CLICK=ANSWER", "ENC HOLD=END" });
+      break;
+
+    // ---- Diagnostics ----
     case MenuId::DiagFavourites: openScreen(Screen::DiagFavourites); break;
     case MenuId::DiagReadGroup:  readGroup_ = 2; openScreen(Screen::DiagReadGroup); break;
     case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
-    case MenuId::Exit:           menuOpen_ = false;                  break;
-    default: break;
+
+    // ---- Debug ----
+    case MenuId::DbgMicTest:      openScreen(Screen::MicTest);        break;
+    case MenuId::DbgButtonMonitor:openScreen(Screen::ButtonMonitor);  break;
+    case MenuId::DbgEncoder:      openScreen(Screen::ButtonMonitor);  break; // shows encoder + ladders
+    case MenuId::DbgBc127:        openScreen(Screen::Bc127Debug);     break;
+    case MenuId::DbgCalibrate:    inputs_.startCalibration();         break;
+
+    // ---- Settings ----
+    case MenuId::SetWifi:        openScreen(Screen::WifiInfo);        break;
+    case MenuId::SetUpdate:      openScreen(Screen::UpdateInfo);      break;
+    case MenuId::SetVersion:     showInfo("VERSION", { std::string("FW ") + cfg::FW_VERSION, "ESP32 AUDI MMI" }); break;
+
+    case MenuId::Exit:           menuOpen_ = false;                   break;
+
+    // ---- Not yet implemented: show a clear placeholder, not a dead key ----
+    default:
+      showInfo("NOT READY", {"NOT IMPLEMENTED", "YET"});
+      break;
   }
   dirty_ = true;
+}
+
+void App::showInfo(const char* title, std::vector<std::string> lines) {
+  infoTitle_ = title; infoLines_ = std::move(lines);
+  screen_ = Screen::Info; dirty_ = true;
 }
 
 // ---- diagnostics sampling + rendering ----
@@ -429,6 +469,13 @@ void App::renderScreen() {
   if (isDiagScreen()) { renderDiag(); return; }
 
   display_.beginFullScreen(true);
+  if (screen_ == Screen::Info) {
+    display_.drawText(0, 0, kFontCentered, infoTitle_.c_str());
+    for (size_t i = 0; i < infoLines_.size() && i < 6; ++i)
+      if (!infoLines_[i].empty())
+        display_.drawText(0, static_cast<uint8_t>(20 + i * 10), kFontCompressedLeft, infoLines_[i].c_str());
+    return;
+  }
   if (screen_ == Screen::MicTest) {
     const BtStatus& st = bt_.status();
     display_.drawText(0, 0, kFontCentered, "MIC TEST");
@@ -516,7 +563,9 @@ void App::renderScreen() {
   }
   const char* title = screen_ == Screen::SwitchDevice ? "SWITCH DEV" : "PHONEBOOK";
   display_.drawText(0, 0, kFontCentered, title);
-  int n = screenItemCount();
+  auto devs = bt_.pairedDevices();
+  int n = screen_ == Screen::SwitchDevice ? static_cast<int>(devs.size()) : screenItemCount();
+  if (screen_ == Screen::SwitchDevice && n == 0) { display_.drawText(0, 24, kFontCompressedLeft, "SCANNING..."); return; }
   const int visible = 8;
   int start = listIndex_ - visible / 2;
   if (start < 0) start = 0;
@@ -525,9 +574,11 @@ void App::renderScreen() {
     int i = start + row;
     char line[24];
     if (screen_ == Screen::SwitchDevice) {
-      const auto& d = btMgr_.paired()[i];
-      bool active = d.mac == bt_.status().activeDeviceMac;
-      std::snprintf(line, sizeof(line), "%c%s", active ? '*' : (i == listIndex_ ? '>' : ' '), d.name.c_str());
+      const auto& d = devs[i];
+      const char* nm = !d.name.empty() ? d.name.c_str()
+                     : d.mac.size() >= 6 ? d.mac.c_str() + d.mac.size() - 6 : d.mac.c_str();
+      bool active = d.connected || d.mac == bt_.status().activeDeviceMac;
+      std::snprintf(line, sizeof(line), "%c%s", active ? '*' : (i == listIndex_ ? '>' : ' '), nm);
     } else {
       std::snprintf(line, sizeof(line), "%c%s", i == listIndex_ ? '>' : ' ', phonebook_.entries()[i].name.c_str());
     }

@@ -13,6 +13,8 @@
 #include "diag/Diagnostics.h"
 #include "diag/Presets.h"
 #include "hal/ISystem.h"
+#include <string>
+#include <vector>
 
 namespace mmi {
 
@@ -36,7 +38,8 @@ private:
   enum class Screen : uint8_t {
     None, SwitchDevice, Phonebook, MicTest, ButtonMonitor, Bc127Debug,
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
-    DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults
+    DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults,
+    Info   // generic title + text lines (version, confirmations, placeholders)
   };
 
   void handle(Action a);
@@ -89,6 +92,11 @@ private:
   char               nameBuf_[9] = {0};
   int                namePos_ = 0;
   int                nameCharIdx_ = 0;
+
+  // Generic Info screen contents (title + up to a few short lines).
+  std::string              infoTitle_;
+  std::vector<std::string> infoLines_;
+  void showInfo(const char* title, std::vector<std::string> lines);
 
   bool     dirty_ = true;
   uint32_t now_ = 0;

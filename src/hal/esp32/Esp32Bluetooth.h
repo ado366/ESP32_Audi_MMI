@@ -1,7 +1,13 @@
-// Esp32Bluetooth.h — IBluetooth over the BC127 (Melody) on UART1.
-// Parses the module's async event lines into BtStatus and issues its AT-style
-// commands. Command spellings marked TODO need a final check against the Melody
-// manual on-car; the event parsing follows the v1 sketch which worked.
+// Esp32Bluetooth.h — IBluetooth over the BC127 (Melody 7.x) on UART1.
+//
+// Melody Link IDs are <device><profile> hex (Link ID Management, manual p.13):
+//   device 1..5, profile 0=A2DP 1=AVRCP 2=AGHFP 3=HFP 4=BLE 5=SPP 6=PBAP.
+// So media/call commands must target the ACTIVE device's link, not a hardcoded
+// "11"/"13". We learn the active device and the paired list from the module:
+//   STATUS -> STATE + one "LINK <id> CONNECTED <profile> <mac> ..." per link
+//   LIST   -> one "LIST <mac> <profiles...>" per paired device
+// STATUS is re-polled periodically so a phone that connects/disconnects (e.g.
+// swapping the OnePlus 9 Pro for the 13) is reflected as the active device.
 #pragma once
 #include "../IBluetooth.h"
 #include "../../Config.h"
@@ -14,10 +20,13 @@ namespace mmi {
 
 class Esp32Bluetooth : public IBluetooth {
 public:
+  // Melody profile ids (second Link-ID digit).
+  enum Prof { A2DP = 0, AVRCP = 1, HFP = 3, PBAP = 6 };
+
   void begin() override {
     Serial1.begin(cfg::BC127_BAUD, SERIAL_8N1, cfg::PIN_BC127_RX, cfg::PIN_BC127_TX);
     delay(800);                 // let the BC127 finish its own boot
-    sendCommand("STATUS");      // probe: a live module answers with STATE.../OK
+    refreshDevices();           // STATUS + LIST: learn active device + paired list
   }
 
   void poll() override {
@@ -27,8 +36,11 @@ public:
       if (c == '\r' || c == '\n') { if (!line_.empty()) { logLine("< " + line_); parse(line_); line_.clear(); } }
       else if (line_.size() < 256) line_.push_back(c);
     }
+    // Re-poll STATUS so the active device tracks connect/disconnect/switch.
+    uint32_t now = millis();
+    if (now - lastStatusPoll_ > kStatusPollMs) { lastStatusPoll_ = now; sendCommand("STATUS"); }
   }
-  uint32_t rxBytes() const { return rxBytes_; }   // total raw bytes seen from the module
+  uint32_t rxBytes() const { return rxBytes_; }
 
   const BtStatus& status() const override { return st_; }
   void sendCommand(const std::string& line) override {
@@ -36,7 +48,6 @@ public:
     Serial1.print(line.c_str()); Serial1.print('\r');
   }
 
-  // Recent BC127 traffic (newest last), for the debug console + cluster view.
   std::string recentLog() const {
     std::string o;
     for (const auto& l : log_) { o += l; o += '\n'; }
@@ -44,35 +55,40 @@ public:
   }
   std::string debugLog() const override { return recentLog(); }
 
-  void playPause() override { sendCommand(st_.playing ? "MUSIC 11 PAUSE" : "MUSIC 11 PLAY"); }
-  void trackNext() override { sendCommand("MUSIC 11 FORWARD"); }
-  void trackPrev() override { sendCommand("MUSIC 11 BACKWARD"); }
-  void volumeUp()   override { sendCommand("VOLUME 11 UP"); }
-  void volumeDown() override { sendCommand("VOLUME 11 DOWN"); }
+  // ---- media / calls: target the ACTIVE device's link ----
+  void playPause() override { sendCommand("MUSIC " + link(AVRCP) + (st_.playing ? " PAUSE" : " PLAY")); }
+  void trackNext() override { sendCommand("MUSIC " + link(AVRCP) + " FORWARD"); }
+  void trackPrev() override { sendCommand("MUSIC " + link(AVRCP) + " BACKWARD"); }
+  void volumeUp()   override { sendCommand("VOLUME " + link(A2DP) + " UP"); }
+  void volumeDown() override { sendCommand("VOLUME " + link(A2DP) + " DOWN"); }
 
-  void callAnswer() override { sendCommand("CALL 11 ANSWER"); }
-  void callReject() override { sendCommand("CALL 11 REJECT"); }
-  void callEnd()    override { sendCommand("CALL 11 END"); }
-  void dial(const std::string& number) override { sendCommand("CALL 11 " + number); }
+  void callAnswer() override { sendCommand("CALL " + link(HFP) + " ANSWER"); }
+  void callReject() override { sendCommand("CALL " + link(HFP) + " REJECT"); }
+  void callEnd()    override { sendCommand("CALL " + link(HFP) + " END"); }
+  void dial(const std::string& number) override { sendCommand("CALL " + link(HFP) + " " + number); }
 
   void connectDevice(const std::string& mac) override {
-    disconnectActive();                       // enforce a single active link
-    sendCommand("OPEN " + mac + " A2DP");
-    sendCommand("OPEN " + mac + " HFP");
-    st_.activeDeviceMac = mac;
+    if (singleDevice_) disconnectActive();     // enforce a single active link
+    // If it's already connected (both phones can be), just make it the active
+    // control target; otherwise open it. Either way STATUS reconciles link ids.
+    int dev = 0;
+    for (auto& kv : mediaDev_) if (macEq(kv.second, mac)) dev = kv.first;
+    if (dev) { setActiveDev(dev); }
+    else { sendCommand("OPEN " + mac + " A2DP"); sendCommand("OPEN " + mac + " HFP"); st_.activeDeviceMac = mac; st_.activeDeviceName.clear(); sendCommand("NAME " + mac); }
+    sendCommand("STATUS");
   }
-  void disconnectActive() override { sendCommand("CLOSE 11"); }
+  void disconnectActive() override { if (activeDev_) sendCommand("CLOSE " + link(A2DP)); }
+
+  std::vector<BtDevice> pairedDevices() const override { return paired_; }
+  void refreshDevices() override { sendCommand("STATUS"); sendCommand("LIST"); }
 
   void setSingleDevice(bool enabled) override { singleDevice_ = enabled; if (enabled) enforceSingle(); }
 
   void micLoopback(bool on) override {
-    // TODO: confirm BC127 loopback/sidetone command in Melody manual.
-    sendCommand(on ? "LOOPBACK 11 ON" : "LOOPBACK 11 OFF");
+    sendCommand(on ? "LOOPBACK " + link(HFP) + " ON" : "LOOPBACK " + link(HFP) + " OFF");
     st_.scoOpen = on; changed();
   }
-  void setMicGain(uint8_t gain) override {
-    sendCommand("SET HFP_GAIN=" + std::to_string(gain)); // TODO: verify key
-  }
+  void setMicGain(uint8_t gain) override { sendCommand("SET HFP_GAIN=" + std::to_string(gain)); }
 
   void onStatusChanged(std::function<void()> cb) override { cb_ = std::move(cb); }
 
@@ -83,13 +99,13 @@ private:
   }
   void changed() { if (cb_) cb_(); }
   static bool has(const std::string& s, const char* sub) { return s.find(sub) != std::string::npos; }
-  static std::string after(const std::string& s, const char* key) {
-    size_t p = s.find(key); if (p == std::string::npos) return "";
-    p += std::string(key).size();
-    size_t e = s.find_first_of("\r\n", p);
-    std::string v = s.substr(p, e == std::string::npos ? std::string::npos : e - p);
-    while (!v.empty() && v.front() == ' ') v.erase(v.begin());
-    return v;
+  static char hexc(int v) { return v < 10 ? char('0' + v) : char('A' + v - 10); }
+  static int hexv(char c) { c = toupper(c); return (c >= '0' && c <= '9') ? c - '0' : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : 0; }
+
+  // Build a link id for a profile on the active device (default device 1).
+  std::string link(int profile) const {
+    int dev = activeDev_ > 0 ? activeDev_ : 1;
+    std::string s; s.push_back(hexc(dev)); s.push_back(hexc(profile)); return s;
   }
 
   static std::vector<std::string> tokens(const std::string& s) {
@@ -102,71 +118,163 @@ private:
     }
     return t;
   }
+  static bool macEq(const std::string& a, const std::string& b) {
+    // BC127 sometimes normalises leading zeros; match on the shared suffix.
+    if (a.empty() || b.empty()) return false;
+    size_t n = a.size() < b.size() ? a.size() : b.size();
+    return a.compare(a.size() - n, n, b, b.size() - n, n) == 0;
+  }
 
-  // Track which BC127 link ids belong to which phone (MAC), and enforce a single
-  // active device by CLOSE-ing the links of all but the most-recently-linked one.
-  void trackLink(const std::string& l) {
-    auto t = tokens(l);
-    // LINK <id> CONNECTED <profile> <mac> <state...>
-    if (t.size() >= 5 && t[0] == "LINK" && t[2] == "CONNECTED") {
-      int id = atoi(t[1].c_str());
-      linkMac_[id] = t[4];
-      lastMac_ = t[4];
-      if (st_.activeDeviceMac != t[4]) {
-        st_.activeDeviceMac = t[4];
-        st_.activeDeviceName.clear();
-        sendCommand("NAME " + t[4]);   // ask the module for the phone's friendly name
-      }
-      if (singleDevice_) enforceSingle();
+  BtDevice* findDev(const std::string& mac) {
+    for (auto& d : paired_) if (macEq(d.mac, mac)) return &d;
+    return nullptr;
+  }
+
+  // Choose the active media device. With BOTH phones connected we want the one
+  // that is actually the audio source: prefer the STREAMING/PLAYING device, then
+  // the currently-active device if it is still connected, then the lowest number.
+  void chooseActive() {
+    int best = 0, keep = 0;
+    for (auto& kv : mediaDev_) {                      // dev -> mac from this scan
+      if (best == 0 || kv.first < best) best = kv.first;
+      if (!st_.activeDeviceMac.empty() && macEq(kv.second, st_.activeDeviceMac)) keep = kv.first;
+    }
+    int dev = streamDev_ ? streamDev_ : (keep ? keep : best);
+    if (dev == 0) { activeDev_ = 0; if (st_.linked || !st_.activeDeviceMac.empty()) { st_.linked = false; st_.playing = false; st_.activeDeviceMac.clear(); st_.activeDeviceName.clear(); changed(); } return; }
+    setActiveDev(dev);
+    bool play = avrcpPlaying_.count(dev) ? avrcpPlaying_[dev] : false;
+    if (play != st_.playing) { st_.playing = play; changed(); }
+  }
+
+  // Make device <dev> active: update mac + resolve its name (via NAME if unknown).
+  void setActiveDev(int dev) {
+    if (dev <= 0) return;
+    activeDev_ = dev; st_.linked = true;
+    auto it = mediaDev_.find(dev);
+    std::string mac = it != mediaDev_.end() ? it->second : "";
+    if (mac.empty()) { sendCommand("STATUS"); return; }      // learn its mac, then reconcile
+    if (!macEq(mac, st_.activeDeviceMac) || st_.activeDeviceName.empty()) {
+      st_.activeDeviceMac = mac;
+      st_.title.clear(); st_.artist.clear();                // metadata belongs to the new device
+      BtDevice* d = findDev(mac);
+      if (d && !d->name.empty()) st_.activeDeviceName = d->name;
+      else { st_.activeDeviceName.clear(); sendCommand("NAME " + mac); }
+      changed();
     }
   }
+
   void enforceSingle() {
-    if (lastMac_.empty()) return;
-    std::vector<int> toClose;
-    for (auto& kv : linkMac_) if (kv.second != lastMac_) toClose.push_back(kv.first);
-    for (int id : toClose) { sendCommand("CLOSE " + std::to_string(id)); linkMac_.erase(id); }
+    // Close every A2DP link that isn't the active device's.
+    if (!activeDev_) return;
+    for (auto& kv : mediaDev_)
+      if (kv.first != activeDev_) sendCommand("CLOSE " + (std::string() + hexc(kv.first) + hexc(A2DP)));
+  }
+
+  static int parseId(const std::string& s) { return s.empty() ? 0 : ((hexv(s[0]) << 4) | (s.size() > 1 ? hexv(s[1]) : 0)); }
+
+  // Register a "LINK <id> CONNECTED <profile> <mac> <state...>" line.
+  void noteLink(const std::vector<std::string>& t) {
+    if (t.size() < 5) return;
+    int id = parseId(t[1]);
+    int dev = id >> 4, prof = id & 0xF;
+    const std::string& mac = t[4];
+    const std::string st = t.size() > 5 ? t[5] : "";
+    if (prof == A2DP || prof == AVRCP) mediaDev_[dev] = mac;
+    if (prof == A2DP && st == "STREAMING") streamDev_ = dev;   // the audio source
+    if (prof == AVRCP) { avrcpPlaying_[dev] = (st == "PLAYING"); if (st == "PLAYING") streamDev_ = dev; }
+    if (BtDevice* d = findDev(mac)) d->connected = true;
+    else paired_.push_back({mac, "", true});
   }
 
   void parse(const std::string& l) {
+    auto t = tokens(l);
     bool ch = false;
-    if (has(l, "LINK") && has(l, "CONNECTED")) trackLink(l);
-    // NAME <mac> <friendly name...> — reply to our NAME query.
-    if (l.rfind("NAME ", 0) == 0) {
-      auto t = tokens(l);
-      if (t.size() >= 3 && t[1] == st_.activeDeviceMac) {
-        std::string name = l.substr(l.find(t[2]));       // everything after the mac
-        if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
-          name = name.substr(1, name.size() - 2);        // BC127 wraps names in quotes
-        st_.activeDeviceName = name;
-        ch = true;
+
+    // ---- STATUS scan: STATE ... LINK ... LINK ... OK ----
+    if (l.rfind("STATE ", 0) == 0) { scanning_ = true; mediaDev_.clear(); avrcpPlaying_.clear(); streamDev_ = 0; for (auto& d : paired_) d.connected = false; return; }
+    if (scanning_ && t.size() >= 3 && t[0] == "LINK" && t[2] == "CONNECTED") { noteLink(t); return; }
+    if (scanning_ && (l == "OK" || l.rfind("OK", 0) == 0)) { scanning_ = false; chooseActive(); return; }
+
+    // ---- async link events ----
+    if (t.size() >= 5 && t[0] == "LINK" && t[2] == "CONNECTED") { noteLink(t); chooseActive(); }
+    if (t.size() >= 4 && t[0] == "OPEN_OK") {                 // OPEN_OK <id> <profile> <mac>
+      int id = (hexv(t[1][0]) << 4) | (t[1].size() > 1 ? hexv(t[1][1]) : 0);
+      int prof = id & 0xF; if (prof == A2DP || prof == AVRCP) { mediaDev_[id >> 4] = t.size() >= 4 ? t[3] : ""; chooseActive(); }
+      st_.linked = true; ch = true;
+    }
+    if (has(l, "CLOSE_OK")) {
+      if (t.size() >= 2) { int dev = parseId(t[1]) >> 4; mediaDev_.erase(dev); avrcpPlaying_.erase(dev); if (streamDev_ == dev) streamDev_ = 0; }
+      chooseActive(); ch = true;
+    }
+
+    // ---- LIST <mac> <profiles...>  (paired device list) ----
+    if (t.size() >= 2 && t[0] == "LIST") {
+      const std::string& mac = t[1];
+      BtDevice* d = findDev(mac);
+      if (!d) { paired_.push_back({mac, "", false}); d = &paired_.back(); }
+      if (d->name.empty()) sendCommand("NAME " + mac);   // resolve even if STATUS added it first
+      ch = true;
+    }
+
+    // ---- NAME <mac> "<name>" ----
+    if (t.size() >= 3 && t[0] == "NAME") {
+      std::string name = l.substr(l.find(t[2]));
+      if (name.size() >= 2 && name.front() == '"' && name.back() == '"') name = name.substr(1, name.size() - 2);
+      if (BtDevice* d = findDev(t[1])) d->name = name;
+      if (macEq(t[1], st_.activeDeviceMac)) { st_.activeDeviceName = name; }
+      ch = true;
+    }
+
+    // ---- metadata (AVRCP_MEDIA <id> TITLE:/ARTIST: ...) — only for the active device ----
+    if (t.size() >= 3 && t[0] == "AVRCP_MEDIA") {
+      int dev = parseId(t[1]) >> 4;
+      if (activeDev_ == 0 || dev == activeDev_) {
+        if (t[2] == "TITLE:")  { st_.title  = afterKey(l, "TITLE:");  ch = true; }
+        if (t[2] == "ARTIST:") { st_.artist = afterKey(l, "ARTIST:"); ch = true; }
       }
     }
-    if (has(l, "OPEN_OK") || has(l, "LINK")) { st_.linked = true; ch = true; }
-    if (has(l, "CLOSE_OK")) {
-      st_.linked = false; st_.playing = false; ch = true;
-      auto t = tokens(l); if (t.size() >= 2) linkMac_.erase(atoi(t[1].c_str()));
+    // ---- playback: the playing/streaming device becomes active ----
+    if (t[0] == "AVRCP_PLAY" || t[0] == "A2DP_STREAM_START") {
+      if (t.size() >= 2) setActiveDev(parseId(t[1]) >> 4);
+      st_.playing = true; ch = true;
     }
-    if (has(l, "TITLE:"))  { st_.title  = after(l, "TITLE:");  ch = true; }
-    if (has(l, "ARTIST:")) { st_.artist = after(l, "ARTIST:"); ch = true; }
-    if (has(l, "AVRCP_PLAY") || has(l, "A2DP_STREAM_START")) { st_.playing = true; ch = true; }
-    if (has(l, "AVRCP_PAUSE") || has(l, "AVRCP_STOP") || has(l, "A2DP_STREAM_SUSPEND")) { st_.playing = false; ch = true; }
-    if (has(l, "CALL_INCOMING")) { st_.call = CallState::Incoming; st_.callerNumber = after(l, "CALL_INCOMING"); ch = true; }
+    if (t[0] == "AVRCP_PAUSE" || t[0] == "AVRCP_STOP" || t[0] == "A2DP_STREAM_SUSPEND") {
+      int dev = t.size() >= 2 ? (parseId(t[1]) >> 4) : 0;
+      if (dev == 0 || dev == activeDev_) { st_.playing = false; ch = true; }
+    }
+    if (has(l, "CALL_INCOMING")) { st_.call = CallState::Incoming; st_.callerNumber = afterKey(l, "CALL_INCOMING"); ch = true; }
     if (has(l, "CALL_OUTGOING") || has(l, "CALL_DIAL")) { st_.call = CallState::Outgoing; ch = true; }
     if (has(l, "SCO_OPEN")) { st_.scoOpen = true; st_.call = CallState::Active; ch = true; }
     if (has(l, "SCO_CLOSE")) { st_.scoOpen = false; ch = true; }
     if (has(l, "CALL_END") || has(l, "CALL_IDLE")) { st_.call = CallState::Idle; st_.scoOpen = false; ch = true; }
-    if (has(l, "CALLER_NUMBER")) { st_.callerNumber = after(l, "CALLER_NUMBER"); ch = true; }
+    if (has(l, "CALLER_NUMBER")) { st_.callerNumber = afterKey(l, "CALLER_NUMBER"); ch = true; }
     if (ch) changed();
   }
+
+  static std::string afterKey(const std::string& s, const char* key) {
+    size_t p = s.find(key); if (p == std::string::npos) return "";
+    p += std::string(key).size();
+    size_t e = s.find_first_of("\r\n", p);
+    std::string v = s.substr(p, e == std::string::npos ? std::string::npos : e - p);
+    while (!v.empty() && v.front() == ' ') v.erase(v.begin());
+    return v;
+  }
+
+  static constexpr uint32_t kStatusPollMs = 4000;
 
   BtStatus st_;
   std::string line_;
   std::deque<std::string> log_;
   std::function<void()> cb_;
   volatile uint32_t rxBytes_ = 0;
-  std::map<int, std::string> linkMac_;   // connected link id -> device MAC
-  std::string lastMac_;                  // most-recently-linked device (kept)
-  bool singleDevice_ = false;            // enforcement off by default
+  std::vector<BtDevice> paired_;         // from LIST/STATUS
+  std::map<int, std::string> mediaDev_;  // device number -> mac (A2DP/AVRCP), current scan
+  std::map<int, bool> avrcpPlaying_;     // device number -> AVRCP playing, current scan
+  int  streamDev_ = 0;                   // device currently streaming/playing, current scan
+  int  activeDev_ = 0;                   // active media device number (1..5), 0=none
+  bool scanning_ = false;                // inside a STATUS response
+  bool singleDevice_ = false;
+  uint32_t lastStatusPoll_ = 0;
 };
 
 } // namespace mmi

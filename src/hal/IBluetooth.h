@@ -3,6 +3,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 #include <functional>
 
 namespace mmi {
@@ -24,6 +25,9 @@ struct BtStatus {
 
 // One phonebook entry (PBAP).
 struct Contact { std::string name; std::string number; };
+
+// A paired/known Bluetooth device (from the BC127 LIST / STATUS).
+struct BtDevice { std::string mac; std::string name; bool connected = false; };
 
 class IBluetooth {
 public:
@@ -52,6 +56,11 @@ public:
   // Single-active-device management
   virtual void connectDevice(const std::string& mac) = 0; // disconnects others
   virtual void disconnectActive() = 0;
+
+  // Paired/known devices (from the BC127 LIST); refreshDevices() re-queries the
+  // module (STATUS + LIST). Used by the Switch-Device screen.
+  virtual std::vector<BtDevice> pairedDevices() const { return {}; }
+  virtual void refreshDevices() {}
   // Enforce only one connected device (closes extras, last-used kept). Default off.
   virtual void setSingleDevice(bool enabled) { (void)enabled; }
 
