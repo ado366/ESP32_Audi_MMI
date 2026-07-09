@@ -20,15 +20,14 @@ public:
   }
   std::string updateInfo() override {
     std::string ip = WiFi.softAPIP().toString().c_str();
-    std::string url; storage_.getString("ota.url", url);
-    return ip + "/update (admin)\nPULL VIA HOTSPOT\n" + (url.empty() ? "NO URL SET" : url);
+    return std::string("FW ") + cfg::FW_VERSION + "\n" + ip + "/update (admin)\nSEL=PULL VIA HOTSPOT\nGITHUB LATEST";
   }
   bool pullUpdate() override {
     // Default to the user's phone hotspot (no text-entry UI yet); NVS overrides.
     std::string ssid, pass, url;
     if (!storage_.getString("hotspot.ssid", ssid) || ssid.empty()) ssid = "OnePlus 9 PRO_8492";
     if (!storage_.getString("hotspot.pass", pass) || pass.empty()) pass = "velkakunda";
-    if (!storage_.getString("ota.url", url) || url.empty()) return false; // need a published .bin URL
+    if (!storage_.getString("ota.url", url) || url.empty()) url = cfg::OTA_URL; // GitHub latest release
     return ota_.pullFromUrl(ssid, pass, url);   // reboots on success
   }
 

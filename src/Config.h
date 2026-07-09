@@ -7,6 +7,10 @@ namespace cfg {
 // Firmware version (shown on the Version screen + OTA page; bump per release).
 constexpr const char* FW_VERSION = "2.1.0";
 
+// Default pull-OTA source: the "latest" release asset on GitHub. Overridable via
+// the NVS key "ota.url". Publish firmware.bin as a release asset named exactly this.
+constexpr const char* OTA_URL = "https://github.com/ado366/ESP32_Audi_MMI/releases/latest/download/firmware.bin";
+
 // Mirror all BC127 UART traffic to the USB debug serial ("[BC127] ...").
 // Off by default; the /bc127 web console + on-cluster BC127 screen still work.
 constexpr bool DEBUG_BC127_SERIAL = false;
