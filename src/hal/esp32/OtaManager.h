@@ -45,9 +45,15 @@ public:
     server_.on("/control", HTTP_GET, [this]() { server_.send(200, "text/html", kWebUiPage); });
     server_.on("/state",   HTTP_GET, [this]() { server_.send(200, "application/json", ctrlState_ ? ctrlState_().c_str() : "{}"); });
     server_.on("/input",   HTTP_POST, [this]() {
-      std::string body = server_.hasArg("plain") ? std::string(server_.arg("plain").c_str()) : "";
-      Control c = webControlFromName(webField(body, "c"));
-      int d = atoi(webField(body, "d").c_str());
+      // Handle both form-encoded (parsed into args) and text/plain bodies.
+      std::string cs, ds;
+      if (server_.hasArg("c")) { cs = server_.arg("c").c_str(); ds = server_.arg("d").c_str(); }
+      else if (server_.hasArg("plain")) {
+        std::string body = server_.arg("plain").c_str();
+        cs = webField(body, "c"); ds = webField(body, "d");
+      }
+      Control c = webControlFromName(cs);
+      int d = atoi(ds.c_str());
       if (ctrlSink_ && c != Control::None) ctrlSink_(c, d);
       server_.send(200, "text/plain", "ok");
     });

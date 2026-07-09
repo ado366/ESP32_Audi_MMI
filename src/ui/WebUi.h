@@ -125,9 +125,10 @@ function text(str,dx,dy,c,cw){cw=cw||6;str=(str||'').toUpperCase();let x=dx;cx.f
     for(let r=0;r<7;r++)for(let col=0;col<5;col++) if(g[r][col]=='#') cx.fillRect((x+col)*S,(dy+r)*S,S-1,S-1);
     x+=cw;} return (x-dx);}
 function textW(str,cw){return (str||'').length*(cw||6);}
+function topLine(s,y){s=(s||'');   // >=8 chars: left-aligned (matches FIS); else centred
+  if(s.length>=8){text(s,0,y,ON);} else {s=s.trim();text(s,Math.max(0,(W-textW(s))/2),y,ON);}}
 function draw(f){cx.fillStyle=BG;cx.fillRect(0,0,cv.width,cv.height);
-  if(f.mode=='top'){const a=(f.top[0]||'').trim(),b2=(f.top[1]||'').trim();
-    text(a,Math.max(0,(W-textW(a))/2),1,ON);text(b2,Math.max(0,(W-textW(b2))/2),10,ON);return;}
+  if(f.mode=='top'){topLine(f.top[0],1);topLine(f.top[1],10);return;}
   for(const o of f.ops){
     if(o.t=='text'){const cen=(o.f&0x20),neg=!(o.f&0x01),cw=(o.f&0x04)?5:6;
       const w=textW(o.s,cw),x=cen?Math.max(0,(W-w)/2):o.x;

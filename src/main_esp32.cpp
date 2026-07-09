@@ -99,12 +99,14 @@ void setup() {
   app->setSystem(&sys);
   app->begin();
   if (needCal) inputs.startCalibration();  // App shows the calibrate screen while active
+  display.flush();                          // push the first frame to the FIS
 }
 
 void loop() {
   inputs.update();          // scan encoder + buttons into the event queue
   ota.handle();             // service the OTA web server
   app->tick(millis());      // drive the UI with a real millisecond clock
+  display.flush();          // send only changed regions to the FIS
 
   // Serial heartbeat (115200) — quick live check over USB.
   static uint32_t lastHb = 0;

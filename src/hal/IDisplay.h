@@ -6,13 +6,15 @@
 namespace mmi {
 
 // FIS font byte codes (see VAGFISWriter font notes):
-//   bit0 1=positive/0=negative(inverted), bit2 1=compressed, bit3 special, bit5 1=centered.
-constexpr uint8_t kFontLeft            = 0x01; // standard, positive, left
-constexpr uint8_t kFontCentered        = 0x21; // standard, positive, centered
-constexpr uint8_t kFontInvertedLeft    = 0x00; // standard, negative, left (highlight)
-constexpr uint8_t kFontCompressedLeft    = 0x05; // compressed, positive, left
-constexpr uint8_t kFontCompressedCenter  = 0x25; // compressed, positive, centered
-constexpr uint8_t kFontCompressedInverted= 0x04; // compressed, negative, left (highlight)
+//   bit0 1=positive/0=negative(inverted), bit1 1=wipe area (overwrite, not XOR),
+//   bit2 1=compressed, bit3 special, bit5 1=centered.
+// bit1 is set so redrawn text overwrites its area cleanly (needed for diff redraws).
+constexpr uint8_t kFontLeft              = 0x03; // standard, positive, wipe, left
+constexpr uint8_t kFontCentered          = 0x23; // standard, positive, wipe, centered
+constexpr uint8_t kFontInvertedLeft      = 0x02; // standard, negative, wipe, left (highlight)
+constexpr uint8_t kFontCompressedLeft    = 0x07; // compressed, positive, wipe, left
+constexpr uint8_t kFontCompressedCenter  = 0x27; // compressed, positive, wipe, centered
+constexpr uint8_t kFontCompressedInverted= 0x06; // compressed, negative, wipe, left (highlight)
 
 class IDisplay {
 public:
