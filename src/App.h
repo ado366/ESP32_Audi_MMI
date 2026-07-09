@@ -93,6 +93,12 @@ private:
   bool     dirty_ = true;
   uint32_t now_ = 0;
   bool     scrolling_ = false;
+  // Menu/list scroll rate-limit. A full FIS redraw takes ~50ms; scrolling faster
+  // than it can clear+repaint makes the cluster drop writes (missing rows, or the
+  // clear is lost so labels overlay). Ignore scroll steps that arrive too soon.
+  uint32_t lastNav_ = 0;
+  static constexpr uint32_t kNavCooldownMs = 150;
+  bool navReady() { if (now_ - lastNav_ < kNavCooldownMs) return false; lastNav_ = now_; return true; }
   static constexpr int kWin = 8;
   static constexpr int kGraphW = 64;
 };

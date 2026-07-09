@@ -560,6 +560,12 @@ void VAGFISWriter::sendKeepAliveMsg() {
   delay(100);
 }
 
+// Non-blocking keepalive: send the 0xC3 command with no surrounding delays, so
+// the caller can pace it from its own millis() loop.
+void VAGFISWriter::sendKeepAliveMsgNB() {
+  sendSingleByteCommand(0xC3);
+}
+
 void VAGFISWriter::radioDisplayOff() {
 char off[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 VAGFISWriter::sendMsg(off);
@@ -581,16 +587,13 @@ uint8_t VAGFISWriter::sendSingleByteCommand(uint8_t txByte) {
     startENA();
     sendByte(txByte);
     stopENA();
-    if(!waitEnaLow(100)) 
+    if(!waitEnaLow(100))
     {
-        Serial.println("ENA_never_low");
     return false; //based on real comunication cluster responce is around 65us
     }
 #ifdef ENABLE_IRQ
   sei();
 #endif
-  Serial.println("we are fine");
-  
 //if we are here, we are fine ...
 return true;
 }

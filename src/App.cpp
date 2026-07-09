@@ -66,14 +66,23 @@ void App::tick(uint32_t nowMs) {
 
   ctx_ = deriveContext();
 
+  // Rate-limit list/menu scrolling: each full-screen redraw takes ~50ms on the
+  // FIS, and scrolling faster makes the cluster drop writes (missing rows / the
+  // clear is lost so labels overlay). Scroll steps that arrive within the cooldown
+  // are dropped; every other action passes straight through.
+  auto dispatch = [&](Action a) {
+    if ((a == Action::ScrollUp || a == Action::ScrollDown) && !navReady()) return;
+    handle(a);
+  };
+
   InputEvent ev;
   while (inputs_.poll(ev)) {
     if (ev.control == Control::EncoderCW || ev.control == Control::EncoderCCW) {
       int steps = ev.encoderDelta >= 0 ? ev.encoderDelta : -ev.encoderDelta;
       Control dir = ev.encoderDelta >= 0 ? Control::EncoderCW : Control::EncoderCCW;
-      for (int i = 0; i < steps; ++i) handle(InputRouter::resolve(dir, ctx_));
+      for (int i = 0; i < steps; ++i) dispatch(InputRouter::resolve(dir, ctx_));
     } else {
-      handle(InputRouter::resolve(ev.control, ctx_));
+      dispatch(InputRouter::resolve(ev.control, ctx_));
     }
     ctx_ = deriveContext();
   }

@@ -53,6 +53,7 @@ void sendOneByte(uint8_t X,uint8_t Y,uint8_t font, uint8_t byte);
     uint8_t sendRawData(char data[]);
     uint8_t sendRawData(uint8_t data[]);
     void sendKeepAliveMsg();
+    void sendKeepAliveMsgNB();   // non-blocking keepalive (0xC3), no delays
     void radioDisplayOff();
     void radioDisplayBlank();
     void GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,char data[],uint8_t mode);
