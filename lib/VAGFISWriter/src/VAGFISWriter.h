@@ -41,13 +41,13 @@ void sendOneByte(uint8_t X,uint8_t Y,uint8_t font, uint8_t byte);
     void sendRadioMsg(char msg[16]);
     //bool sendRadioMsg(String msg);
     void sendString(String line1="", String line2="", bool center=true);
-    void sendStringFS(int x, int y, uint8_t font, String line);
+    uint8_t sendStringFS(int x, int y, uint8_t font, String line);   // returns sendRawData status (false=bus busy)
     void sendMsgFS(uint8_t X,uint8_t Y,uint8_t font,uint8_t size,char * msg);
     void sendMsgFS(uint8_t X,uint8_t Y,uint8_t font,uint8_t size,const char * msg);
-    void initScreen(uint8_t X,uint8_t Y,uint8_t X1,uint8_t Y1,uint8_t mode);
+    uint8_t initScreen(uint8_t X,uint8_t Y,uint8_t X1,uint8_t Y1,uint8_t mode);  // returns sendRawData status
     void reset(uint8_t mode = 0x82);
     void initMiddleScreen(uint8_t mode = 0x82);
-    void initFullScreen(uint8_t mode = 0x82);
+    uint8_t initFullScreen(uint8_t mode = 0x82);
     void initFullScreenFilled();
     //void sendRawMsg(char in_msg[]);
     uint8_t sendRawData(char data[]);

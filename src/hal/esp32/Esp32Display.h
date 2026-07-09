@@ -101,19 +101,23 @@ public:
       return;
     }
     if (haveWritten_ && (uint32_t)(now - lastWrite_) < kGapMs) return;
-    const Cmd& c = q_.front();
+    Cmd& c = q_.front();
+    bool pop = true;
     switch (c.kind) {
-      case Cmd::Init:     fis_.initFullScreen(); graphics_ = true; break;
+      // The FIS bus is shared with the OEM radio, so a write can be dropped when
+      // the bus is busy (sendRawData returns false). Retry a failed Init/Draw a
+      // few times instead of leaving a blank row ("missing lines").
+      case Cmd::Init:     if (!fis_.initFullScreen() && c.retries++ < kMaxRetries) pop = false; else graphics_ = true; break;
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::Draw:     drawOp(c.op); break;
+      case Cmd::Draw:     if (!drawOp(c.op) && c.retries++ < kMaxRetries) pop = false; break;
     }
-    q_.pop_front();
+    if (pop) q_.pop_front();
     lastWrite_ = now; haveWritten_ = true;
   }
 
 private:
-  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
+  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; uint8_t retries = 0; };
 
   static bool opsEqual(const std::vector<FrameOp>& a, const std::vector<FrameOp>& b) {
     if (a.size() != b.size()) return false;
@@ -124,23 +128,25 @@ private:
     return true;
   }
 
-  void drawOp(const FrameOp& op) {
+  // Returns false if the write was dropped (bus busy) so service() can retry.
+  bool drawOp(const FrameOp& op) {
     if (op.t == 't') {
-      fis_.sendStringFS(op.x, op.y, op.f, String(op.s.c_str()));
-    } else {
-      uint8_t buf[1024];
-      int bytes = (op.w * op.h + 7) / 8;
-      if (bytes > (int)sizeof(buf)) bytes = sizeof(buf);
-      for (int i = 0; i < bytes; ++i)
-        buf[i] = (uint8_t)((hexv(op.s[i * 2]) << 4) | hexv(op.s[i * 2 + 1]));
-      fis_.GraphicFromArray(op.x, op.y, op.w, op.h, buf, 1);
+      return fis_.sendStringFS(op.x, op.y, op.f, String(op.s.c_str())) != 0;
     }
+    uint8_t buf[1024];
+    int bytes = (op.w * op.h + 7) / 8;
+    if (bytes > (int)sizeof(buf)) bytes = sizeof(buf);
+    for (int i = 0; i < bytes; ++i)
+      buf[i] = (uint8_t)((hexv(op.s[i * 2]) << 4) | hexv(op.s[i * 2 + 1]));
+    fis_.GraphicFromArray(op.x, op.y, op.w, op.h, buf, 1);  // bitmaps: no status, no retry
+    return true;
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
   static constexpr uint32_t kGapMs       = 5;    // min gap between FIS writes (VAGFISPages DELAY)
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
+  static constexpr uint8_t  kMaxRetries  = 4;    // retry a dropped FIS write this many times
 
   VAGFISWriter fis_;
   FrameRecorder rec_;

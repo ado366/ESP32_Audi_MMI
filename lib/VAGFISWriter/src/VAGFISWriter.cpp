@@ -83,15 +83,15 @@ void VAGFISWriter::sendString(String line1, String line2, bool center) {
 }
 
 //for compatibility with FICuntrol
-void VAGFISWriter::sendStringFS(int x, int y, uint8_t font, String line) {
+uint8_t VAGFISWriter::sendStringFS(int x, int y, uint8_t font, String line) {
   line.toUpperCase();
   tx_array[0] = 0x56; // command to set text-display in FIS
   tx_array[1] = line.length() + 4; // Length of this message (command and this length not counted
-  tx_array[2] = font; //font parameters (see below) sendMsgFS notes 
+  tx_array[2] = font; //font parameters (see below) sendMsgFS notes
   tx_array[3] = x;
   tx_array[4] = y;
   line.toCharArray(&tx_array[5], line.length() + 1);
-  sendRawData(tx_array);
+  return sendRawData(tx_array);   // false = bus busy / write dropped (caller can retry)
 }
 
 uint8_t VAGFISWriter::sendMsg(char * msg) {
@@ -114,7 +114,7 @@ uint8_t VAGFISWriter::sendMsg(const char * msg) {
 
 
 
-void VAGFISWriter::initScreen(uint8_t X,uint8_t Y,uint8_t X1,uint8_t Y1,uint8_t mode) {
+uint8_t VAGFISWriter::initScreen(uint8_t X,uint8_t Y,uint8_t X1,uint8_t Y1,uint8_t mode) {
 /*
 ---------------------------
 | Initializing the screen |
@@ -144,13 +144,14 @@ To switch from the graphical mode to the standard one, you must send the initial
 
   tx_array[0] = 0x53; // ID
   tx_array[1] = 0x06; // Length of this message (command and this length not counted
-  tx_array[2] = mode; //0x80,0x81 - Initializing the screen without cleaning; 0x82 - screen initialization with cleaning, positive screen; 0x83 - screen initialization with cleaning, negative screen 
+  tx_array[2] = mode; //0x80,0x81 - Initializing the screen without cleaning; 0x82 - screen initialization with cleaning, positive screen; 0x83 - screen initialization with cleaning, negative screen
   tx_array[3] = X;
   tx_array[4] = Y;
   tx_array[5] = X1;
   tx_array[6] = Y1;
-  sendRawData(tx_array);
+  uint8_t ok = sendRawData(tx_array);
   if (X==0 && Y==0 && X1==1 && Y1==1) delay(25); //18ms pulse from cluster, probably ack that screen is out of graphix mode..
+  return ok;
 }
 
 
@@ -164,8 +165,8 @@ void VAGFISWriter::initMiddleScreen(uint8_t mode){
     VAGFISWriter::initScreen(0,27,64,48,mode);
 }
 
-void VAGFISWriter::initFullScreen(uint8_t mode){
-    VAGFISWriter::initScreen(0,0,64,88,mode);
+uint8_t VAGFISWriter::initFullScreen(uint8_t mode){
+    return VAGFISWriter::initScreen(0,0,64,88,mode);
 }
 
 void VAGFISWriter::initFullScreenFilled(){
