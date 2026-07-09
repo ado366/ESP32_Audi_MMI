@@ -566,9 +566,10 @@ void App::render() {
     scrolling_ = st.title.size() > kWin || st.artist.size() > kWin;
     display_.showTopLines(marquee(st.title).c_str(), marquee(st.artist).c_str());
   } else {
-    scrolling_ = false;
-    display_.showTopLines(st.playing ? "PLAYING " : "PAUSED  ",
-                          st.activeDeviceName.empty() ? "NO PHONE" : st.activeDeviceName.c_str());
+    std::string dev = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName)
+                                : "NO PHONE";
+    scrolling_ = dev.size() > kWin;   // scroll long phone names
+    display_.showTopLines(st.playing ? "PLAYING " : "PAUSED  ", marquee(dev).c_str());
   }
 }
 

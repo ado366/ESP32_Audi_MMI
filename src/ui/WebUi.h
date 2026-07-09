@@ -45,16 +45,22 @@ inline const char* webCtxName(Context c) {
   }
 }
 
+inline std::string webJsonEsc(const std::string& in) {
+  std::string o;
+  for (char c : in) { if (c == '"' || c == '\\') o.push_back('\\'); if ((unsigned char)c >= 0x20) o.push_back(c); }
+  return o;
+}
+
 inline std::string webBtJson(const BtStatus& s) {
   auto call = [](CallState c) {
     switch (c) { case CallState::Incoming: return "incoming"; case CallState::Outgoing: return "outgoing";
                  case CallState::Active: return "active"; default: return "idle"; }
   };
   std::string j = "{\"linked\":"; j += s.linked ? "true" : "false";
-  j += ",\"device\":\"" + s.activeDeviceName + "\"";
+  j += ",\"device\":\"" + webJsonEsc(s.activeDeviceName) + "\"";
   j += ",\"playing\":"; j += s.playing ? "true" : "false";
   j += ",\"call\":\""; j += call(s.call); j += "\"";
-  j += ",\"caller\":\"" + s.callerNumber + "\",\"callerName\":\"" + s.callerName + "\"}";
+  j += ",\"caller\":\"" + webJsonEsc(s.callerNumber) + "\",\"callerName\":\"" + webJsonEsc(s.callerName) + "\"}";
   return j;
 }
 

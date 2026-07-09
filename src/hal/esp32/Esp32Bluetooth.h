@@ -112,6 +112,11 @@ private:
       int id = atoi(t[1].c_str());
       linkMac_[id] = t[4];
       lastMac_ = t[4];
+      if (st_.activeDeviceMac != t[4]) {
+        st_.activeDeviceMac = t[4];
+        st_.activeDeviceName.clear();
+        sendCommand("NAME " + t[4]);   // ask the module for the phone's friendly name
+      }
       if (singleDevice_) enforceSingle();
     }
   }
@@ -125,6 +130,17 @@ private:
   void parse(const std::string& l) {
     bool ch = false;
     if (has(l, "LINK") && has(l, "CONNECTED")) trackLink(l);
+    // NAME <mac> <friendly name...> — reply to our NAME query.
+    if (l.rfind("NAME ", 0) == 0) {
+      auto t = tokens(l);
+      if (t.size() >= 3 && t[1] == st_.activeDeviceMac) {
+        std::string name = l.substr(l.find(t[2]));       // everything after the mac
+        if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
+          name = name.substr(1, name.size() - 2);        // BC127 wraps names in quotes
+        st_.activeDeviceName = name;
+        ch = true;
+      }
+    }
     if (has(l, "OPEN_OK") || has(l, "LINK")) { st_.linked = true; ch = true; }
     if (has(l, "CLOSE_OK")) {
       st_.linked = false; st_.playing = false; ch = true;
