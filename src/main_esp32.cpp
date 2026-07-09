@@ -72,11 +72,11 @@ void setup() {
     char b[320];
     snprintf(b, sizeof(b),
       "{\"up_s\":%lu,\"heap\":%u,\"link\":%s,\"dev\":\"%s\",\"play\":%s,\"call\":%d,"
-      "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"raw\":[%d,%d,%d],\"ctx\":%d}",
+      "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d}",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
       s.linked ? "true" : "false", s.activeDeviceName.c_str(), s.playing ? "true" : "false",
       (int)s.call, s.scoOpen ? "true" : "false", s.title.c_str(),
-      diag.isConnected() ? "true" : "false",
+      diag.isConnected() ? "true" : "false", (unsigned long)display.writeFails(),
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
       app ? (int)app->context() : -1);
     return std::string(b);
@@ -114,11 +114,11 @@ void loop() {
   if (millis() - lastHb > 1000) {
     lastHb = millis();
     const BtStatus& s = bt.status();
-    Serial.printf("[hb] up=%lus heap=%u wifi=%s ip=%s link=%d dev=%s play=%d call=%d kwp=%d bc_rx=%lu ctx=%d\n",
+    Serial.printf("[hb] up=%lus heap=%u wifi=%s ip=%s link=%d dev=%s play=%d call=%d kwp=%d bc_rx=%lu fisfail=%lu ctx=%d\n",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
       WiFi.status() == WL_CONNECTED ? "home" : "ap-only", ota.staIP().c_str(),
       s.linked, s.activeDeviceName.c_str(), s.playing, (int)s.call,
-      diag.isConnected(), (unsigned long)bt.rxBytes(),
+      diag.isConnected(), (unsigned long)bt.rxBytes(), (unsigned long)display.writeFails(),
       app ? (int)app->context() : -1);
   }
 }

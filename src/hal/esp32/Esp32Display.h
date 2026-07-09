@@ -55,6 +55,7 @@ public:
   void release() override { rec_.release(); }
 
   std::string toJson() const { return rec_.toJson(); }
+  uint32_t writeFails() const { return writeFails_; }   // count of dropped FIS writes (diagnostics)
 
   // Decide what (if anything) to enqueue for the current recorded frame.
   void flush() {
@@ -79,10 +80,15 @@ public:
     haveTop_ = false;
     if (!q_.empty()) return;                    // never interrupt an in-flight redraw
     const auto& ops = rec_.ops();
-    if (fullValid_ && opsEqual(ops, drawn_)) return; // nothing changed; service() keepalives
-    // Bound redraw frequency so a fast scroll doesn't clear+repaint every few ms.
     uint32_t now = millis();
-    if (fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return; // retry next loop
+    bool changed = !fullValid_ || !opsEqual(ops, drawn_);
+    // The cluster occasionally drops a row over time even though the write ACKs
+    // (fisfail stays 0). A fresh full redraw always paints every row, so repaint
+    // the whole page periodically while idle to heal any dropped rows.
+    bool repaintDue = fullValid_ && (uint32_t)(now - lastRedraw_) >= kRepaintMs;
+    if (!changed && !repaintDue) return;
+    // Bound redraw frequency so a fast scroll doesn't clear+repaint every few ms.
+    if (changed && fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
     q_.push_back({Cmd::Init, {}, ""});
     for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
     drawn_ = ops; fullValid_ = true; lastRedraw_ = now;
@@ -101,23 +107,35 @@ public:
       return;
     }
     if (haveWritten_ && (uint32_t)(now - lastWrite_) < kGapMs) return;
-    Cmd& c = q_.front();
-    bool pop = true;
+    lastWrite_ = now; haveWritten_ = true;
+    Cmd c = q_.front();
     switch (c.kind) {
-      // The FIS bus is shared with the OEM radio, so a write can be dropped when
-      // the bus is busy (sendRawData returns false). Retry a failed Init/Draw a
-      // few times instead of leaving a blank row ("missing lines").
-      case Cmd::Init:     if (!fis_.initFullScreen() && c.retries++ < kMaxRetries) pop = false; else graphics_ = true; break;
+      // A FIS write can be dropped if the cluster's ENA handshake times out. Text
+      // draws are XOR, so a failed line must NOT be re-drawn in place (that would
+      // erase a row the cluster actually painted). Instead, on ANY failure restart
+      // the whole page: initFullScreen clears everything and all rows redraw onto
+      // blank — self-correcting, no erase, no partial state.
+      case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); return; } graphics_ = true; break;
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::Draw:     if (!drawOp(c.op) && c.retries++ < kMaxRetries) pop = false; break;
+      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); return; } break;
     }
-    if (pop) q_.pop_front();
-    lastWrite_ = now; haveWritten_ = true;
+    q_.pop_front();
+    if (q_.empty()) redrawFails_ = 0;   // a full page drained cleanly
   }
 
 private:
-  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; uint8_t retries = 0; };
+  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
+
+  // A write in the current full-screen page failed; requeue a clean redraw of the
+  // whole page (bounded, so a persistently unresponsive cluster can't thrash).
+  void restartRedraw() {
+    ++writeFails_;
+    if (!fullValid_ || drawn_.empty() || ++redrawFails_ > kMaxRestarts) { redrawFails_ = 0; return; }
+    q_.clear();
+    q_.push_back({Cmd::Init, {}, ""});
+    for (const auto& op : drawn_) q_.push_back({Cmd::Draw, op, ""});
+  }
 
   static bool opsEqual(const std::vector<FrameOp>& a, const std::vector<FrameOp>& b) {
     if (a.size() != b.size()) return false;
@@ -146,7 +164,8 @@ private:
   static constexpr uint32_t kGapMs       = 5;    // min gap between FIS writes (VAGFISPages DELAY)
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
-  static constexpr uint8_t  kMaxRetries  = 4;    // retry a dropped FIS write this many times
+  static constexpr uint32_t kRepaintMs   = 2000; // periodic full repaint to heal dropped rows
+  static constexpr uint8_t  kMaxRestarts = 6;    // bound page-redraw restarts on write failure
 
   VAGFISWriter fis_;
   FrameRecorder rec_;
@@ -157,6 +176,8 @@ private:
   bool graphics_ = false;           // bus currently in graphics mode
   bool fullValid_ = false;          // drawn_ describes the live full-screen page
   bool haveTop_ = false, haveWritten_ = false;
+  uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts
+  uint32_t writeFails_ = 0;         // total dropped FIS writes (diagnostics)
 };
 
 } // namespace mmi
