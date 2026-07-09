@@ -23,20 +23,19 @@ public:
     return std::string("FW ") + cfg::FW_VERSION + "\n" + ip + "/update (admin)\nSEL=PULL VIA HOTSPOT\nGITHUB LATEST";
   }
   bool pullUpdate() override {
-    // Try the phone hotspot first, then the home/local network (NVS overrides the
-    // Config defaults). No text-entry UI yet, so credentials come from those.
+    // Credentials come ONLY from NVS (written by a USB provisioning flash), so
+    // the published OTA binary carries no WiFi passwords.
     std::string url;
     if (!storage_.getString("ota.url", url) || url.empty()) url = cfg::OTA_URL;
 
     std::string hs, hp, ns, np;
-    if (!storage_.getString("hotspot.ssid", hs) || hs.empty()) hs = cfg::HOTSPOT_SSID;
-    if (!storage_.getString("hotspot.pass", hp) || hp.empty()) hp = cfg::HOTSPOT_PASS;
-    if (!storage_.getString("home.ssid", ns) || ns.empty()) ns = cfg::HOME_SSID;
-    if (!storage_.getString("home.pass", np) || np.empty()) np = cfg::HOME_PASS;
+    storage_.getString("hotspot.ssid", hs); storage_.getString("hotspot.pass", hp);
+    storage_.getString("home.ssid", ns);    storage_.getString("home.pass", np);
 
     std::vector<std::pair<std::string, std::string>> nets;
-    nets.push_back({hs, hp});
+    if (!hs.empty()) nets.push_back({hs, hp});
     if (!ns.empty()) nets.push_back({ns, np});
+    if (nets.empty()) return false;       // not provisioned — USB-flash first
     return ota_.pullFromUrl(nets, url);   // reboots on success
   }
 

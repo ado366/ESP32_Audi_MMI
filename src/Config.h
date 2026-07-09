@@ -1,7 +1,6 @@
 // Config.h — pin map and compile-time constants for the ESP32 Audi MMI.
 // Pins carried over verbatim from the v1 sketch so existing wiring is unchanged.
 #pragma once
-#include "Secrets.h"   // gitignored WiFi credentials (see Secrets.example.h)
 
 namespace cfg {
 

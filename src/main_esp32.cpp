@@ -8,8 +8,30 @@
 #include "hal/esp32/Esp32Diag.h"
 #include "hal/esp32/OtaManager.h"
 #include "hal/esp32/Esp32System.h"
+#ifdef MMI_PROVISION
+#include "Secrets.h"   // real WiFi creds — only in the USB provisioning build
+#endif
 
 using namespace mmi;
+
+// Write baked WiFi credentials into NVS once (USB provisioning build only).
+// NVS survives OTA, so later credential-free OTA builds keep working.
+static void provisionCredentials(Esp32Storage& s) {
+#ifdef MMI_PROVISION
+  std::string tmp;
+  if (!s.getString("hotspot.ssid", tmp)) {
+    s.putString("hotspot.ssid", cfg::HOTSPOT_SSID);
+    s.putString("hotspot.pass", cfg::HOTSPOT_PASS);
+  }
+  if (!s.getString("home.ssid", tmp) && std::string(cfg::HOME_SSID).size()) {
+    s.putString("home.ssid", cfg::HOME_SSID);
+    s.putString("home.pass", cfg::HOME_PASS);
+  }
+  Serial.println(F("provisioned WiFi credentials to NVS"));
+#else
+  (void)s;
+#endif
+}
 
 static Esp32Storage   storage;
 static Esp32Display   display;
@@ -24,6 +46,7 @@ void setup() {
   Serial.println(F("ESP32 Audi MMI v2 — boot"));
 
   storage.begin();
+  provisionCredentials(storage);   // USB build writes creds to NVS; OTA build no-op
   display.begin();
   inputs.begin();
   inputs.attachStorage(&storage);
