@@ -85,17 +85,20 @@ public:
     // Bound redraw frequency so a fast scroll doesn't repaint every few ms.
     if (fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
 
-    // If the layout is unchanged (same op count/slots) and only left-aligned text
-    // differs — the menu/list scroll case — overwrite just the changed rows using
-    // the WIPE font (no full-screen clear), so scrolling doesn't flash. Any layout
-    // change (screen switch, centered text, bitmap) falls back to clear + redraw.
-    if (sameStructureWipeable(ops)) {
+    // If the layout is unchanged (same op count/slots) and only text differs — the
+    // menu/list scroll case — update just the changed rows in place with no full-
+    // screen clear (so no flash). Text is drawn XOR, so re-drawing the OLD text
+    // erases it; then draw the NEW text. Layout changes (screen switch, bitmap)
+    // fall back to a clean clear + redraw.
+    if (sameStructureText(ops)) {
       for (size_t i = 0; i < ops.size(); ++i)
-        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s)
-          q_.push_back({Cmd::Draw, ops[i], "", true});
+        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s) {
+          q_.push_back({Cmd::Draw, drawn_[i], ""});   // XOR-erase old row
+          q_.push_back({Cmd::Draw, ops[i], ""});      // XOR-draw new row
+        }
     } else {
       q_.push_back({Cmd::Init, {}, ""});
-      for (const auto& op : ops) q_.push_back({Cmd::Draw, op, "", false});
+      for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
     }
     drawn_ = ops; fullValid_ = true; lastRedraw_ = now;
   }
@@ -124,7 +127,7 @@ public:
       case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); pop = false; } else graphics_ = true; break;
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::Draw:     if (!drawOp(c.op, c.wipe)) { restartRedraw(); pop = false; } break;
+      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
     }
     if (pop) { q_.pop_front(); if (q_.empty()) redrawFails_ = 0; } // page drained cleanly
     // Measure the gap from the END of the (blocking) write: the cluster needs the
@@ -135,17 +138,17 @@ public:
   }
 
 private:
-  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; bool wipe = false; };
+  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
 
   // True if the new frame has the same layout as the drawn one and every changed
-  // op is a left-aligned text row (so it can be overwritten in place via wipe,
-  // avoiding a full-screen clear/flash).
-  bool sameStructureWipeable(const std::vector<FrameOp>& ops) const {
+  // op is a text row — so each changed row can be updated in place by XOR-erasing
+  // the old text and XOR-drawing the new, avoiding a full-screen clear/flash.
+  bool sameStructureText(const std::vector<FrameOp>& ops) const {
     if (!fullValid_ || ops.size() != drawn_.size()) return false;
     for (size_t i = 0; i < ops.size(); ++i) {
-      if (!ops[i].sameSlot(drawn_[i])) return false;                 // layout moved
+      if (!ops[i].sameSlot(drawn_[i])) return false;                    // layout moved
       if (ops[i].f == drawn_[i].f && ops[i].s == drawn_[i].s) continue; // unchanged
-      if (ops[i].t != 't' || (ops[i].f & 0x20)) return false;        // bitmap/centered change
+      if (ops[i].t != 't') return false;                               // bitmap change -> full redraw
     }
     return true;
   }
@@ -170,20 +173,9 @@ private:
   }
 
   // Returns false if the write was dropped so service() can restart the page.
-  // wipe=true overwrites the row in place (wipe font, padded to clear the old
-  // label) instead of relying on a prior full-screen clear — used for flash-free
-  // scroll updates.
-  bool drawOp(const FrameOp& op, bool wipe) {
+  bool drawOp(const FrameOp& op) {
     if (op.t == 't') {
-      uint8_t font = op.f;
-      std::string s = op.s;
-      if (wipe) {
-        font |= 0x02;                                  // wipe bit: overwrite the cell area
-        int cw = (op.f & 0x04) ? 4 : 6;                // pad to clear the full row width
-        int cells = (64 - op.x) / cw;
-        while ((int)s.size() < cells) s.push_back(' ');
-      }
-      return fis_.sendStringFS(op.x, op.y, font, String(s.c_str())) != 0;
+      return fis_.sendStringFS(op.x, op.y, op.f, String(op.s.c_str())) != 0;
     }
     uint8_t buf[1024];
     int bytes = (op.w * op.h + 7) / 8;
