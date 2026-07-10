@@ -5,6 +5,7 @@
 #include "ui/MenuTree.h"
 #include "ui/GraphRenderer.h"
 #include "diag/DtcDescriptions.h"
+#include "diag/DtcElaboration.h"
 #include <cstdio>
 
 namespace mmi {
@@ -437,20 +438,29 @@ void App::renderDiag() {
       display_.drawText(0, static_cast<uint8_t>(listTop + r * rowH),
                         i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, l);
     }
-    // Selected fault's description below the split: 2 wrapped rows + a marquee'd
-    // 3rd row for the remainder (so the full text is readable however long).
+    // Selected fault's description + elaboration below the split. ALWAYS emit 3
+    // rows (blank where unused) so the frame structure is identical across faults
+    // — otherwise the op count changes on scroll and forces a full redraw (flash).
+    // Row 3 marquees the remainder so the full "what - how" text stays readable.
+    std::string dl0 = " ", dl1 = " ", dl2 = " ";
     if (listIndex_ < n) {
       const char* desc = dtcDescription(faults_[listIndex_].code);
-      auto lines = wrapText(desc ? desc : "NO DESCRIPTION", 15, 8);
-      if (lines.size() >= 1) display_.drawText(0, 64, kFontCompressedLeft, lines[0].c_str());
-      if (lines.size() >= 2) display_.drawText(0, 72, kFontCompressedLeft, lines[1].c_str());
-      if (lines.size() == 3) display_.drawText(0, 80, kFontCompressedLeft, lines[2].c_str());
-      else if (lines.size() > 3) {                    // marquee the tail on the 3rd row
+      const char* elab = dtcElaboration(faults_[listIndex_].info);
+      std::string full = desc ? desc : "NO DESCRIPTION";
+      if (elab) { full += " - "; full += elab; }          // what (- how it fails)
+      auto lines = wrapText(full, 15, 8);
+      if (lines.size() >= 1) dl0 = lines[0];
+      if (lines.size() >= 2) dl1 = lines[1];
+      if (lines.size() == 3) dl2 = lines[2];
+      else if (lines.size() > 3) {
         std::string rest = lines[2];
         for (size_t i = 3; i < lines.size(); ++i) rest += " " + lines[i];
-        display_.drawText(0, 80, kFontCompressedLeft, marquee(rest, 15).c_str());
+        dl2 = marquee(rest, 15);
       }
     }
+    display_.drawText(0, 64, kFontCompressedLeft, dl0.c_str());
+    display_.drawText(0, 72, kFontCompressedLeft, dl1.c_str());
+    display_.drawText(0, 80, kFontCompressedLeft, dl2.c_str());
     return;
   }
 
