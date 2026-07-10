@@ -167,6 +167,7 @@ int App::screenItemCount() const {
     case Screen::Phonebook:      return static_cast<int>(phonebook_.size());
     case Screen::DiagFavourites: return presets_.size();
     case Screen::DiagFaults:     return static_cast<int>(faults_.size());
+    case Screen::SelectEcu:      return ecu::kModuleCount;
     default: return 0;
   }
 }
@@ -272,6 +273,9 @@ void App::screenSelect() {
     const auto& e = phonebook_.entries();
     if (listIndex_ < static_cast<int>(e.size())) bt_.dial(e[listIndex_].number);
     screen_ = Screen::None;
+  } else if (screen_ == Screen::SelectEcu) {
+    if (listIndex_ >= 0 && listIndex_ < ecu::kModuleCount) readEcu_ = ecu::kModules[listIndex_].addr;
+    screen_ = Screen::None;
   }
   dirty_ = true;
 }
@@ -328,6 +332,10 @@ void App::onMenuSelect(MenuId id) {
       break;
 
     // ---- Diagnostics ----
+    case MenuId::DiagSelectEcu:
+      openScreen(Screen::SelectEcu);
+      for (int i = 0; i < ecu::kModuleCount; ++i) if (ecu::kModules[i].addr == readEcu_) listIndex_ = i;
+      break;
     case MenuId::DiagFavourites: openScreen(Screen::DiagFavourites); break;
     case MenuId::DiagReadGroup:  readGroup_ = 2; openScreen(Screen::DiagReadGroup); break;
     case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
@@ -562,7 +570,8 @@ void App::renderScreen() {
     if (upd && sys_) display_.drawText(0, 70, kFontCompressedLeft, "SEL=PULL UPDATE");
     return;
   }
-  const char* title = screen_ == Screen::SwitchDevice ? "SWITCH DEV" : "PHONEBOOK";
+  const char* title = screen_ == Screen::SwitchDevice ? "SWITCH DEV"
+                    : screen_ == Screen::SelectEcu ? "SELECT ECU" : "PHONEBOOK";
   display_.drawText(0, 0, kFontCentered, title);
   auto devs = bt_.pairedDevices();
   int n = screen_ == Screen::SwitchDevice ? static_cast<int>(devs.size()) : screenItemCount();
@@ -580,6 +589,9 @@ void App::renderScreen() {
                      : d.mac.size() >= 6 ? d.mac.c_str() + d.mac.size() - 6 : d.mac.c_str();
       bool active = d.connected || d.mac == bt_.status().activeDeviceMac;
       std::snprintf(line, sizeof(line), "%c%s", active ? '*' : ' ', nm);   // * = connected
+    } else if (screen_ == Screen::SelectEcu) {
+      const auto& m = ecu::kModules[i];
+      std::snprintf(line, sizeof(line), "%c%s", m.addr == readEcu_ ? '*' : ' ', m.name);  // * = current
     } else {
       std::snprintf(line, sizeof(line), " %s", phonebook_.entries()[i].name.c_str());
     }

@@ -24,6 +24,7 @@ static const MenuItem kBluetooth[] = {
 };
 
 static const MenuItem kDiagnostics[] = {
+  LEAF("SELECT ECU", DiagSelectEcu),
   LEAF("FAVOURITES", DiagFavourites),
   LEAF("READ GROUP", DiagReadGroup),
   LEAF("READ FAULTS",DiagReadFaults),
@@ -80,7 +81,7 @@ const MenuItem& menuRoot() { return kRoot; }
 uint8_t diagnosticsTopIndex() {
   for (uint8_t i = 0; i < kRoot.childCount; ++i) {
     const MenuItem& c = kRoot.children[i];
-    if (c.childCount > 0 && c.children[0].id == MenuId::DiagFavourites) return i;
+    if (c.childCount > 0 && c.children[0].id == MenuId::DiagSelectEcu) return i;
   }
   return 0;
 }

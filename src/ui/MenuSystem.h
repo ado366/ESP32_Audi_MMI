@@ -14,7 +14,7 @@ enum class MenuId : uint16_t {
   // Bluetooth
   BtActiveDevice, BtSwitchDevice, BtPair, BtPhonebook, BtAutoConnect, BtReset, BtSettings, BtCalls, BtSingleDevice,
   // Diagnostics
-  DiagFavourites, DiagReadGroup, DiagReadFaults, DiagGraph, DiagDisplayMode, DiagVagcom,
+  DiagSelectEcu, DiagFavourites, DiagReadGroup, DiagReadFaults, DiagGraph, DiagDisplayMode, DiagVagcom,
   // Adaptation
   AdaptInit, AdaptByte, AdaptFrame,
   // Debug

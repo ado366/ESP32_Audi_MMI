@@ -41,6 +41,7 @@ private:
     None, SwitchDevice, Phonebook, MicTest, ButtonMonitor, Bc127Debug,
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
     DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults,
+    SelectEcu, // pick the KWP module to talk to
     Info   // generic title + text lines (version, confirmations, placeholders)
   };
 
