@@ -59,6 +59,8 @@ private:
   void sampleDiag();             // periodic measuring-value read while a diag screen is open
   bool isDiagScreen() const;
   Context deriveContext() const;
+  bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
+  void switchPhone(int dir);
   int  screenItemCount() const;
   std::string marquee(const std::string& s, int width = kWin) const;
 

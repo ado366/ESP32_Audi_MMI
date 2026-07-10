@@ -48,6 +48,30 @@ Context App::deriveContext() const {
   return menuOpen_ ? Context::Menu : Context::NowPlaying;
 }
 
+// While parked on Now-Playing, in CD mode, with playback paused, the encoder
+// switches which connected phone is the active one (so you can pick the source
+// before pressing play). Only meaningful with 2+ phones connected at once.
+bool App::canSwitchPhone() const {
+  if (ctx_ != Context::NowPlaying) return false;
+  if (bt_.status().playing) return false;               // only while paused
+  if (radio_ && !radio_->cdMode()) return false;        // only in CD mode
+  int connected = 0;
+  for (const auto& d : bt_.pairedDevices()) if (d.connected) ++connected;
+  return connected >= 2;
+}
+
+void App::switchPhone(int dir) {
+  std::vector<BtDevice> conn;
+  for (const auto& d : bt_.pairedDevices()) if (d.connected) conn.push_back(d);
+  if (conn.size() < 2) return;
+  int cur = -1;
+  for (int i = 0; i < (int)conn.size(); ++i) if (conn[i].mac == bt_.status().activeDeviceMac) cur = i;
+  int next = cur < 0 ? 0 : (cur + dir + (int)conn.size()) % (int)conn.size();
+  bt_.connectDevice(conn[next].mac);   // already connected -> just makes it the active target
+  btMgr_.onConnected(conn[next].mac);  // persist as last-used
+  dirty_ = true;
+}
+
 bool App::isDiagScreen() const {
   return screen_ == Screen::DiagFavourites || screen_ == Screen::DiagReadGroup ||
          screen_ == Screen::DiagGraph || screen_ == Screen::DiagFaults;
@@ -137,8 +161,8 @@ void App::handle(Action a) {
       menuOpen_ = false; screen_ = Screen::None;
       dirty_ = true;
       break;
-    case Action::ScrollDown: if (menuOpen_) { menu_.scrollDown(); dirty_ = true; } break;
-    case Action::ScrollUp:   if (menuOpen_) { menu_.scrollUp();   dirty_ = true; } break;
+    case Action::ScrollDown: if (menuOpen_) { menu_.scrollDown(); dirty_ = true; } else if (canSwitchPhone()) switchPhone(+1); break;
+    case Action::ScrollUp:   if (menuOpen_) { menu_.scrollUp();   dirty_ = true; } else if (canSwitchPhone()) switchPhone(-1); break;
     case Action::Select:     if (menuOpen_) { menu_.select();     dirty_ = true; } break;
     case Action::Back:
       if (menuOpen_) {
