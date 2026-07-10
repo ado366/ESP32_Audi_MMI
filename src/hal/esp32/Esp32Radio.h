@@ -44,18 +44,17 @@ public:
 
 private:
   void apply(const uint8_t* d, int n) {
-    // "CD" + spaces at the start means the head unit selected our aux source.
-    static const uint8_t kCd[7] = {'C', 'D', ' ', ' ', ' ', ' ', ' '};
-    bool cd = (n >= 7 && memcmp(d, kCd, 7) == 0);
+    // Any line starting with "CD" means our aux source is selected — this also
+    // covers the "CD" error/status messages (e.g. "CD ERR"), so we keep showing
+    // Bluetooth info rather than passing the error text through.
+    bool cd = (n >= 2 && d[0] == 'C' && d[1] == 'D');
     char l1[9] = {0}, l2[9] = {0};
-    for (int i = 0; i < 8 && i < n; i++)      l1[i]     = clean(d[i]);
-    for (int i = 8; i < 16 && i < n; i++)     l2[i - 8] = clean(d[i]);
+    for (int i = 0; i < 8 && i < n; i++)      l1[i]     = (char)d[i];   // radio text is already ASCII
+    for (int i = 8; i < 16 && i < n; i++)     l2[i - 8] = (char)d[i];
     if (cd != cdMode_ || strncmp(l1, line1_, 8) != 0 || strncmp(l2, line2_, 8) != 0) changed_ = true;
     cdMode_ = cd;
     memcpy(line1_, l1, 9); memcpy(line2_, l2, 9);
   }
-  // Map radio bytes to the printable set; the display layer uppercases/trims.
-  static char clean(uint8_t c) { return (c >= 0x20 && c < 0x80) ? (char)c : ' '; }
 
   VAGFISReader reader_;
   char line1_[9] = {0}, line2_[9] = {0};
