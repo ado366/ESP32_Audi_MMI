@@ -379,6 +379,13 @@ bool KWP::isConnected() {
 
 void KWP::obdWrite(uint8_t data) {
   Serial2.write(data);
+  Serial2.flush();
+  // Half-duplex K-line (via the MC33290): every byte we transmit is reflected
+  // back on RX. Read and discard that echo so it isn't mistaken for the module's
+  // reply/complement. We confirmed the echo is always present (loopback probe).
+  unsigned long start = millis();
+  while (!Serial2.available() && millis() - start < 100) {}
+  if (Serial2.available()) Serial2.read();   // drop our own echoed byte
 }
 
 uint8_t KWP::obdRead() {

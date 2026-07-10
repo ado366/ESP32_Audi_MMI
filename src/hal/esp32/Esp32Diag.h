@@ -23,6 +23,7 @@ public:
   bool isConnected() const override { return connected_; }
   std::string kwpDebug() const { return std::string(kwp_.dbg.c_str()); }  // connect-flow trace
   void requestProbe(int rx = -1, int tx = -1) { probeRx_ = rx; probeTx_ = tx; probeReq_ = true; }
+  void requestRead(uint8_t ecu, uint8_t group) { reqEcu_ = ecu; reqGroup_ = group; }  // debug: trigger connect+read
 
   bool readGroup(uint8_t ecuAddr, uint8_t group, Group& out) override {
     reqEcu_ = ecuAddr; reqGroup_ = group;      // hand the request to the task

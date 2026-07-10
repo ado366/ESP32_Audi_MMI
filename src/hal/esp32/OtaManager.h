@@ -73,6 +73,13 @@ public:
       if (kwpProbe_) kwpProbe_(rx, tx);
       server_.send(200, "text/plain", "probing K-line; read /kwpdbg in ~1s");
     });
+    // Trigger a KWP connect+read of ?ecu=<hex>&grp=<n> (debug); trace at /kwpdbg.
+    server_.on("/kwptest", HTTP_GET, [this]() {
+      int ecu = strtol(server_.arg("ecu").c_str(), nullptr, 16);
+      int grp = server_.hasArg("grp") ? server_.arg("grp").toInt() : 1;
+      if (kwpTest_) kwpTest_((uint8_t)ecu, (uint8_t)grp);
+      server_.send(200, "text/plain", "connecting; read /kwpdbg");
+    });
     // BC127 raw command console: send a command, watch recent module traffic.
     server_.on("/bc127", HTTP_GET, [this]() {
       if (!authed()) return;
@@ -115,6 +122,7 @@ public:
                        std::function<std::string()> log) { bcSend_ = std::move(send); bcLog_ = std::move(log); }
   void setKwpLog(std::function<std::string()> f) { kwpLog_ = std::move(f); }
   void setKwpProbe(std::function<void(int,int)> f) { kwpProbe_ = std::move(f); }
+  void setKwpTest(std::function<void(uint8_t,uint8_t)> f) { kwpTest_ = std::move(f); }
   // Browser control/debug UI: state = display frame + BT json; sink injects inputs.
   void setControlHooks(std::function<std::string()> state,
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
@@ -182,6 +190,7 @@ private:
   std::function<std::string()> bcLog_;
   std::function<std::string()> kwpLog_;
   std::function<void(int,int)> kwpProbe_;
+  std::function<void(uint8_t,uint8_t)> kwpTest_;
   std::function<std::string()> ctrlState_;
   std::function<void(Control, int)> ctrlSink_;
 };

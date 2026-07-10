@@ -89,6 +89,7 @@ void setup() {
                       []() { return bt.recentLog(); });
   ota.setKwpLog([]() { return diag.kwpDebug(); });   // KWP connect trace at /kwpdbg
   ota.setKwpProbe([](int rx, int tx) { diag.requestProbe(rx, tx); }); // K-line loopback at /kwpprobe
+  ota.setKwpTest([](uint8_t e, uint8_t g) { diag.requestRead(e, g); });  // connect+read at /kwptest
   // Browser control/debug UI at http://192.168.4.1/control — drive the whole UI
   // from a computer (no car buttons needed) and see the live FIS.
   ota.setControlHooks(
