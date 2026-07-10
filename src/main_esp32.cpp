@@ -73,16 +73,23 @@ void setup() {
   //  /status  -> JSON telemetry,  /bc127 -> raw BC127 command console.
   ota.setStatusProvider([]() {
     const BtStatus& s = bt.status();
-    char b[320];
+    auto san = [](const char* p) {   // keep JSON valid: printable ASCII only
+      std::string o; for (; p && *p; ++p) { char c = *p; o += (c >= 0x20 && c < 0x7F && c != '"' && c != '\\') ? c : '.'; }
+      return o;
+    };
+    std::string dev = san(s.activeDeviceName.c_str()), title = san(s.title.c_str());
+    std::string rl1 = san(radio.line1()), rl2 = san(radio.line2());
+    char b[400];
     snprintf(b, sizeof(b),
       "{\"up_s\":%lu,\"heap\":%u,\"link\":%s,\"dev\":\"%s\",\"play\":%s,\"call\":%d,"
       "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"cd\":%s,\"rl1\":\"%s\",\"rl2\":\"%s\","
-      "\"raw\":[%d,%d,%d],\"ctx\":%d}",
+      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d}",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
-      s.linked ? "true" : "false", s.activeDeviceName.c_str(), s.playing ? "true" : "false",
-      (int)s.call, s.scoOpen ? "true" : "false", s.title.c_str(),
+      s.linked ? "true" : "false", dev.c_str(), s.playing ? "true" : "false",
+      (int)s.call, s.scoOpen ? "true" : "false", title.c_str(),
       diag.isConnected() ? "true" : "false", (unsigned long)display.writeFails(),
-      radio.cdMode() ? "true" : "false", radio.line1(), radio.line2(),
+      radio.cdMode() ? "true" : "false", rl1.c_str(), rl2.c_str(),
+      (unsigned long)diag.readCount(),
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
       app ? (int)app->context() : -1);
     return std::string(b);

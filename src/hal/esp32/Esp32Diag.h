@@ -22,6 +22,7 @@ public:
 
   bool isConnected() const override { return connected_; }
   std::string kwpDebug() const { return std::string(kwp_.dbg.c_str()); }  // connect-flow trace
+  uint32_t readCount() const { return reads_; }                            // total measuring-block reads
   void requestProbe(int rx = -1, int tx = -1) { probeRx_ = rx; probeTx_ = tx; probeReq_ = true; }
   void requestRead(uint8_t ecu, uint8_t group) { reqEcu_ = ecu; reqGroup_ = group; }  // debug: trigger connect+read
 
@@ -87,6 +88,7 @@ private:
 
       SENSOR s[16];
       int n = kwp_.readBlock(e, g, 16, s);
+      if (n > 0) ++reads_;                          // measured live-read counter
       Group tmp; tmp.count = 0;
       for (int i = 0; i < n && tmp.count < 4; ++i) {
         Measurement m;
@@ -114,6 +116,7 @@ private:
   volatile bool connected_ = false, haveData_ = false;
   volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;
   volatile int  probeRx_ = -1, probeTx_ = -1;
+  volatile uint32_t reads_ = 0;
 };
 
 } // namespace mmi

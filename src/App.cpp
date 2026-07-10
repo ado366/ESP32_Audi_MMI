@@ -243,8 +243,8 @@ bool App::handleScreen(Action a) {
   }
   if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph) {
     switch (a) {
-      case Action::ScrollDown: readGroup_++; graph_.clear(); dirty_ = true; return true;
-      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; graph_.clear(); dirty_ = true; return true;
+      case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); dirty_ = true; return true;
+      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); dirty_ = true; return true;
       case Action::Select:     startAddFavourite(); return true;   // add current group as a favourite
       case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
       default: return false;
@@ -300,6 +300,7 @@ void App::screenSelect() {
     screen_ = Screen::None;
   } else if (screen_ == Screen::SelectEcu) {
     if (listIndex_ >= 0 && listIndex_ < ecu::kModuleCount) readEcu_ = ecu::kModules[listIndex_].addr;
+    group_.count = 0; faultsLoaded_ = false; faults_.clear();   // stale data belongs to the old module
     screen_ = Screen::None;
   }
   dirty_ = true;
@@ -331,7 +332,7 @@ void App::finalizeName() {
 }
 
 void App::openScreen(Screen s) {
-  screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0;
+  screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0; group_.count = 0;  // no stale values
   if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); diag_.readFaults(readEcu_, faults_); }
   dirty_ = true;
 }
@@ -514,12 +515,18 @@ void App::renderDiag() {
     return;
   }
 
-  // MultiValue: description and value on SEPARATE rows (both shown in full, no
-  // truncation), the block shifted into the lower area so the first value sits
-  // below the FIS 2/3 divider. kDiagTop/kMeasH are tuned for the B5 cluster.
+  // MultiValue: header (module + group), then description/value on separate rows.
   display_.beginFullScreen(true);
-  std::snprintf(l, sizeof(l), "%s %u", header, static_cast<unsigned>(readGroup_));
-  display_.drawText(0, 0, kFontCentered, l);
+  if (screen_ == Screen::DiagReadGroup) {
+    display_.drawText(0, 0, kFontCentered, ecu::moduleName(readEcu_));         // which module
+    std::snprintf(l, sizeof(l), "GROUP %u", static_cast<unsigned>(readGroup_));
+    display_.drawText(0, 9, kFontCompressedCenter, l);                         // compressed fits 2-3 digits
+  } else {
+    display_.drawText(0, 0, kFontCentered, header);                           // favourite label
+  }
+  // No fresh data for this group (just switched, empty block, or read failed) —
+  // show NO DATA rather than the previous group's stale values.
+  if (group_.count == 0) { display_.drawText(0, 44, kFontCentered, "NO DATA"); return; }
   const int kDiagTop = 25, kLineH = 8;   // 7px glyph + 1px gap between every line
   for (int i = 0; i < group_.count && i < 4; ++i) {
     int y = kDiagTop + i * kLineH * 2;
