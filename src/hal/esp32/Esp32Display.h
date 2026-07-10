@@ -181,8 +181,9 @@ private:
       // which is what the scroll erase-then-draw relies on. Strip the flag first.
       if (op.f & kFontHighlight) {
         uint8_t bar[64]; memset(bar, 0xFF, sizeof(bar));        // 64x8 solid block
-        uint8_t y = op.y >= 1 ? op.y - 1 : 0;
-        fis_.GraphicFromArray(0, y, 64, 8, bar, 1);            // 1 = XOR mode
+        // Bar at the row's own y: covers the 7px glyph with the extra pixel BELOW
+        // it (padding under the text) rather than above — symmetric-looking.
+        fis_.GraphicFromArray(0, op.y, 64, 8, bar, 1);         // 1 = XOR mode
       }
       return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
