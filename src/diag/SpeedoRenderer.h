@@ -37,15 +37,17 @@ struct SpeedoRenderer {
     if (m & 0x10) rect(b, w, h, cx,          midY, t, half + t);       // e
     if (m & 0x04) rect(b, w, h, cx + dw - t, midY, t, half + t);       // c
   }
-  // Render `value` as centered big 7-seg digits in a w x h bitmap.
+  // Render `value` as big 7-seg digits, right-aligned within a fixed 3-digit field
+  // (so the ones digit stays put and the number doesn't shift as digits change).
   static std::vector<uint8_t> render(int value, int w, int h) {
     std::vector<uint8_t> b((w * h + 7) / 8, 0);
     char s[8]; snprintf(s, sizeof(s), "%d", value < 0 ? 0 : (value > 999 ? 999 : value));
     int n = (int)strlen(s);
-    const int dw = 18, gap = 4, t = 3;
-    int totalW = n * dw + (n - 1) * gap;
+    const int field = 3, dw = 18, gap = 4, t = 3;
+    int totalW = field * dw + (field - 1) * gap;      // width of a 3-digit field
     int x0 = (w - totalW) / 2; if (x0 < 0) x0 = 0;
-    for (int i = 0; i < n; ++i) digit(b, w, h, s[i], x0 + i * (dw + gap), 0, dw, h, t);
+    int startCell = field - n;                        // right-align the actual digits
+    for (int i = 0; i < n; ++i) digit(b, w, h, s[i], x0 + (startCell + i) * (dw + gap), 0, dw, h, t);
     return b;
   }
 };

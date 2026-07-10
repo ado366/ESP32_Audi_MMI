@@ -128,7 +128,7 @@ void App::tick(uint32_t nowMs) {
     }
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
-      screen_ == Screen::DiagFaults) dirty_ = true; // live (fault desc marquee)
+      screen_ == Screen::DiagFaults || screen_ == Screen::Speedo) dirty_ = true; // live (marquee / speedo sweep)
 
   if (scrolling_) dirty_ = true;
   if (dirty_) render();
@@ -136,12 +136,15 @@ void App::tick(uint32_t nowMs) {
 
 std::string App::marquee(const std::string& s, int width) const {
   if (static_cast<int>(s.size()) <= width) return s;
-  std::string padded = s + "    ";
-  int span = static_cast<int>(padded.size());
-  int step = static_cast<int>((now_ / 350) % static_cast<uint32_t>(span));
-  std::string out;
-  for (int i = 0; i < width; ++i) out += padded[(step + i) % span];
-  return out;
+  // Read-friendly scroll: pause on the start, slide one char at a time to the end,
+  // pause on the end, then reset. Feels far less jumpy than a continuous wrap.
+  const int stepMs = 260, pause = 4;                 // pause = held steps at each end
+  int extra = static_cast<int>(s.size()) - width;    // chars to scroll past
+  int cycle = extra + pause * 2;
+  int t = static_cast<int>((now_ / stepMs) % static_cast<uint32_t>(cycle));
+  int off = t - pause;                               // hold at 0 during the first `pause` steps
+  if (off < 0) off = 0; else if (off > extra) off = extra;
+  return s.substr(off, width);
 }
 
 // ---- input handling ----
@@ -217,8 +220,9 @@ bool App::handleScreen(Action a) {
     return true; // consume nav
   }
   if (screen_ == Screen::Speedo) {
-    if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
-    return true; // consume nav (encoder does nothing on the speedo)
+    if (a == Action::Back) { screen_ = Screen::None; speedoTest_ = false; dirty_ = true; }
+    else if (a == Action::Select) { speedoTest_ = !speedoTest_; dirty_ = true; }  // toggle 0-200 sweep
+    return true; // consume nav
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
@@ -427,11 +431,16 @@ void App::renderDiag() {
 
   if (screen_ == Screen::Speedo) {
     display_.beginFullScreen(true);
-    int spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
-    auto bmp = SpeedoRenderer::render(spd, 64, 44);
-    display_.drawBitmap(0, 8, 64, 44, bmp.data());   // big 7-seg digits
-    display_.drawText(0, 62, kFontCentered, "KM/H");
-    display_.drawText(0, 74, kFontCompressedCenter, diag_.isConnected() ? " " : "CONNECTING");
+    int spd;
+    if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
+      int p = static_cast<int>((now_ / 50) % 402u);
+      spd = p < 201 ? p : 401 - p;
+    } else {
+      spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
+    }
+    display_.drawText(0, 10, kFontCentered, "KM/H");     // top 1/3
+    auto bmp = SpeedoRenderer::render(spd, 64, 52);
+    display_.drawBitmap(0, 32, 64, 52, bmp.data());      // bottom 2/3, big 7-seg digits
     return;
   }
 
@@ -554,7 +563,7 @@ void App::renderDiag() {
     int y = kDiagTop + i * kLineH * 2;
     if (y + kLineH + 7 > 88) break;
     std::string val = fmt(group_.values[i]);
-    int vx = 64 - static_cast<int>(val.size()) * 5;  // right-align the value (~5px/compressed char)
+    int vx = 64 - static_cast<int>(val.size()) * 22 / 5;  // right-align flush (~4.4px/compressed char)
     if (vx < 0) vx = 0;
     display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, group_.values[i].label.c_str()); // label (left)
     display_.drawText(static_cast<uint8_t>(vx), static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, val.c_str()); // value (right)

@@ -94,6 +94,7 @@ private:
   std::vector<Dtc>   faults_;
   bool               faultsLoaded_ = false;
   bool               oneDevice_ = false;     // single-active-device enforcement (persisted)
+  bool               speedoTest_ = false;    // speedo bench-test sweep 0..200
   uint32_t           lastSample_ = 0;
   // Add-to-favourites name picker (Maxi-K style)
   Preset             pendingPreset_;
