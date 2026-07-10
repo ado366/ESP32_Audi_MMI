@@ -81,23 +81,36 @@ public:
     if (!q_.empty()) return;                    // never interrupt an in-flight redraw
     const auto& ops = rec_.ops();
     uint32_t now = millis();
-    if (fullValid_ && opsEqual(ops, drawn_)) return;
+    if (fullValid_ && opsEqual(ops, drawn_)) {
+      // Nothing changed. If we did XOR partial updates while scrolling, do ONE
+      // authoritative full redraw once things go quiet, to correct any desync
+      // (a dropped bar/text write) that would otherwise persist. Flashes once,
+      // only after scrolling stops — not periodically.
+      if (needHeal_ && (uint32_t)(now - lastRedraw_) >= kSettleMs) {
+        q_.push_back({Cmd::Init, {}, ""});
+        for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
+        needHeal_ = false; lastRedraw_ = now;
+      }
+      return;
+    }
     // Bound redraw frequency so a fast scroll doesn't repaint every few ms.
     if (fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
 
-    // If the layout is unchanged (same op count/slots) — the menu/list scroll case
-    // — authoritatively redraw only the CHANGED rows: clear the row's own region
-    // (blank, or FILLED for a highlighted row = instant inverse) then draw the
-    // text. This is self-correcting (each row is cleared+drawn, no XOR state to
-    // desync) and flash-free (untouched rows never blank). Layout changes fall
-    // back to a full clear + redraw.
-    if (sameLayout(ops)) {
+    // Same layout, only text/font differs — the menu/list scroll case. Update just
+    // the changed rows with no full-screen clear (flash-free): text is drawn XOR,
+    // so re-drawing the OLD row erases it, then draw the NEW row. (Sub-region init
+    // can't be used to clear a row — it drops this cluster out of graphics mode.)
+    if (sameStructureText(ops)) {
       for (size_t i = 0; i < ops.size(); ++i)
-        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s)
-          enqueueRow(ops[i]);
+        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s) {
+          q_.push_back({Cmd::Draw, drawn_[i], ""});   // XOR-erase old row
+          q_.push_back({Cmd::Draw, ops[i], ""});      // XOR-draw new row
+        }
+      needHeal_ = true;                               // schedule an authoritative heal
     } else {
       q_.push_back({Cmd::Init, {}, ""});
-      for (const auto& op : ops) enqueueRow(op, true);   // Init already blanked the screen
+      for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
+      needHeal_ = false;
     }
     drawn_ = ops; fullValid_ = true; lastRedraw_ = now;
   }
@@ -123,11 +136,10 @@ public:
       // erase a row the cluster actually painted). Instead, on ANY failure restart
       // the whole page: initFullScreen clears everything and all rows redraw onto
       // blank — self-correcting, no erase, no partial state.
-      case Cmd::Init:        if (!fis_.initFullScreen()) { restartRedraw(); pop = false; } else graphics_ = true; break;
-      case Cmd::ExitGfx:     fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
-      case Cmd::TopLine:     { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::ClearRegion: if (!fis_.initScreen(c.rx, c.ry, c.rx2, c.ry2, c.rmode)) { restartRedraw(); pop = false; } else graphics_ = true; break;
-      case Cmd::Draw:        if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
+      case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); pop = false; } else graphics_ = true; break;
+      case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
+      case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
+      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
     }
     if (pop) { q_.pop_front(); if (q_.empty()) redrawFails_ = 0; } // page drained cleanly
     // Measure the gap from the END of the (blocking) write: the cluster needs the
@@ -138,35 +150,18 @@ public:
   }
 
 private:
-  struct Cmd { enum Kind { Init, ExitGfx, TopLine, ClearRegion, Draw } kind; FrameOp op; std::string buf;
-               uint8_t rx = 0, ry = 0, rx2 = 0, ry2 = 0, rmode = 0x82; };
+  struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
 
-  // Same op count and slot positions (type/x/y/w/h) as the drawn frame — only the
-  // font/text of some rows differs. That's the scroll case where we can redraw
-  // just the changed rows in-region instead of clearing the whole screen.
-  bool sameLayout(const std::vector<FrameOp>& ops) const {
+  // Same layout as the drawn frame and every changed op is a text row — so each
+  // changed row can be updated in place by XOR-erasing the old and drawing the new.
+  bool sameStructureText(const std::vector<FrameOp>& ops) const {
     if (!fullValid_ || ops.size() != drawn_.size()) return false;
-    for (size_t i = 0; i < ops.size(); ++i) if (!ops[i].sameSlot(drawn_[i])) return false;
-    return true;
-  }
-
-  // Redraw one op authoritatively: clear its own region (blank, or FILLED for a
-  // highlighted row = inverse background) then draw. afterInit=true means the whole
-  // screen was just cleared, so a plain text row needs no per-row clear.
-  void enqueueRow(const FrameOp& op, bool afterInit = false) {
-    if (op.t == 't') {
-      bool hl = op.f & kFontHighlight;
-      if (hl || !afterInit) {
-        Cmd c; c.kind = Cmd::ClearRegion; c.rx = 0; c.ry = op.y; c.rx2 = 64;
-        c.ry2 = (uint8_t)(op.y + 7); c.rmode = hl ? 0x83 : 0x82;   // 0x83 = filled (lit) bg
-        q_.push_back(c);
-      }
-    } else if (!afterInit) {
-      Cmd c; c.kind = Cmd::ClearRegion; c.rx = op.x; c.ry = op.y;
-      c.rx2 = (uint8_t)(op.x + op.w > 64 ? 64 : op.x + op.w); c.ry2 = (uint8_t)(op.y + op.h); c.rmode = 0x82;
-      q_.push_back(c);
+    for (size_t i = 0; i < ops.size(); ++i) {
+      if (!ops[i].sameSlot(drawn_[i])) return false;                    // layout moved
+      if (ops[i].f == drawn_[i].f && ops[i].s == drawn_[i].s) continue; // unchanged
+      if (ops[i].t != 't') return false;                               // bitmap change -> full redraw
     }
-    q_.push_back({Cmd::Draw, op, ""});
+    return true;
   }
 
   // A write in the current full-screen page failed; requeue a clean redraw of the
@@ -176,7 +171,7 @@ private:
     if (!fullValid_ || drawn_.empty() || ++redrawFails_ > kMaxRestarts) { redrawFails_ = 0; return; }
     q_.clear();
     q_.push_back({Cmd::Init, {}, ""});
-    for (const auto& op : drawn_) enqueueRow(op, true);
+    for (const auto& op : drawn_) q_.push_back({Cmd::Draw, op, ""});
   }
 
   static bool opsEqual(const std::vector<FrameOp>& a, const std::vector<FrameOp>& b) {
@@ -191,9 +186,16 @@ private:
   // Returns false if the write was dropped so service() can restart the page.
   bool drawOp(const FrameOp& op) {
     if (op.t == 't') {
-      // The row's background (blank, or filled for a highlight) was set by the
-      // preceding ClearRegion; XOR text over a filled bg comes out dark = inverse.
-      // Strip the highlight flag before it reaches the FIS.
+      // Highlighted row: XOR a 64x7 solid bar (matches glyph height) so the row
+      // lights up, then XOR the text over it (glyphs toggle dark) -> inverse. Both
+      // are XOR, so re-running drawOp erases the row exactly (scroll erase-then-
+      // draw). The bar is graphics packets with no built-in trailing gap, so wait
+      // before the text write or the cluster drops it (rows vanished on 7px bars).
+      if (op.f & kFontHighlight) {
+        uint8_t bar[56]; memset(bar, 0xFF, sizeof(bar));
+        fis_.GraphicFromArray(0, op.y, 64, 7, bar, 1);       // 1 = XOR mode
+        delayMicroseconds(2000);                             // settle before text
+      }
       return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
     uint8_t buf[1024];
@@ -209,6 +211,7 @@ private:
   static constexpr uint32_t kGapMs       = 5;    // gap AFTER each FIS write (VAGFISPages value)
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
+  static constexpr uint32_t kSettleMs    = 300;  // after scroll stops, one heal redraw
   static constexpr uint8_t  kMaxRestarts = 6;    // bound page-redraw restarts on write failure
 
   VAGFISWriter fis_;
@@ -222,6 +225,7 @@ private:
   bool haveTop_ = false, haveWritten_ = false;
   uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts
   uint32_t writeFails_ = 0;         // total dropped FIS writes (diagnostics)
+  bool needHeal_ = false;           // a partial (XOR) update happened; heal when quiet
 };
 
 } // namespace mmi
