@@ -414,14 +414,19 @@ void App::renderDiag() {
   if (screen_ == Screen::DiagFaults) {
     display_.beginFullScreen(true);
     int n = static_cast<int>(faults_.size());
-    std::snprintf(l, sizeof(l), "FAULTS %d", n);      // count in the header
-    display_.drawText(0, 0, kFontCentered, l);
-    if (!faultsLoaded_) { display_.drawText(0, 20, kFontCompressedLeft, "READING..."); return; }
-    if (faults_.empty()) { display_.drawText(0, 24, kFontCentered, "NO FAULTS"); return; }
+    display_.drawText(0, 0, kFontCentered, "FAULTS");
+    if (!faultsLoaded_) { display_.drawText(0, 10, kFontCentered, "READING..."); return; }
+    if (faults_.empty()) { display_.drawText(0, 10, kFontCentered, "NONE FOUND"); return; }
 
-    // Fault-code list (windowed); bottom 3 lines show the selected fault's text.
+    // Header line 2 = position (replaces a scrollbar bitmap, which forced a full
+    // redraw/flash on every scroll — this is plain text, so only the row updates).
+    int sel = listIndex_ < n ? listIndex_ + 1 : n;
+    std::snprintf(l, sizeof(l), "FOUND %d/%d", sel, n);
+    display_.drawText(0, 10, kFontCentered, l);
+
+    // Fault-code list, starting at y=25, kept above the ~2/3 split line.
     const int total = n + 1;                          // + CLEAR ALL row
-    const int visible = 4, listTop = 11, rowH = 10;
+    const int visible = 3, listTop = 25, rowH = 10;
     int start = listIndex_ - visible / 2;
     if (start < 0) start = 0;
     if (start > total - visible) start = total - visible < 0 ? 0 : total - visible;
@@ -432,23 +437,19 @@ void App::renderDiag() {
       display_.drawText(0, static_cast<uint8_t>(listTop + r * rowH),
                         i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, l);
     }
-    // Scrollbar (right edge) when the list doesn't all fit: track + thumb.
-    if (total > visible) {
-      const int barH = visible * rowH;
-      int thumbH = barH * visible / total; if (thumbH < 5) thumbH = 5;
-      int denom = total - visible; if (denom < 1) denom = 1;
-      int thumbOff = (barH - thumbH) * start / denom;
-      uint8_t bar[64];
-      for (int r = 0; r < barH && r < 64; ++r)
-        bar[r] = (r >= thumbOff && r < thumbOff + thumbH) ? 0x1E : 0x04;  // 8px field: thumb 4px, track 1px
-      display_.drawBitmap(56, static_cast<uint8_t>(listTop), 8, static_cast<uint8_t>(barH), bar);
-    }
-    // Selected fault's description, word-wrapped across the last 3 lines.
+    // Selected fault's description below the split: 2 wrapped rows + a marquee'd
+    // 3rd row for the remainder (so the full text is readable however long).
     if (listIndex_ < n) {
       const char* desc = dtcDescription(faults_[listIndex_].code);
-      auto lines = wrapText(desc ? desc : "NO DESCRIPTION", 15, 3);
-      for (size_t i = 0; i < lines.size(); ++i)
-        display_.drawText(0, static_cast<uint8_t>(64 + i * 8), kFontCompressedLeft, lines[i].c_str());
+      auto lines = wrapText(desc ? desc : "NO DESCRIPTION", 15, 8);
+      if (lines.size() >= 1) display_.drawText(0, 64, kFontCompressedLeft, lines[0].c_str());
+      if (lines.size() >= 2) display_.drawText(0, 72, kFontCompressedLeft, lines[1].c_str());
+      if (lines.size() == 3) display_.drawText(0, 80, kFontCompressedLeft, lines[2].c_str());
+      else if (lines.size() > 3) {                    // marquee the tail on the 3rd row
+        std::string rest = lines[2];
+        for (size_t i = 3; i < lines.size(); ++i) rest += " " + lines[i];
+        display_.drawText(0, 80, kFontCompressedLeft, marquee(rest, 15).c_str());
+      }
     }
     return;
   }
