@@ -85,16 +85,14 @@ public:
     // Bound redraw frequency so a fast scroll doesn't repaint every few ms.
     if (fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
 
-    // Same layout, only text/font differs — the menu/list scroll case. Update just
-    // the changed rows with no full-screen clear (flash-free): text is drawn XOR,
-    // so re-drawing the OLD row erases it, then draw the NEW row. (Sub-region init
-    // can't be used to clear a row — it drops this cluster out of graphics mode.)
+    // Same layout, only text/font differs — the menu/list scroll case. Redraw just
+    // the changed rows with no full-screen clear (flash-free). drawOp overwrites
+    // each row's background authoritatively (replace mode, not XOR), so redrawing a
+    // row also REPAIRS any prior dropped write — no XOR desync to persist.
     if (sameStructureText(ops)) {
       for (size_t i = 0; i < ops.size(); ++i)
-        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s) {
-          q_.push_back({Cmd::Draw, drawn_[i], ""});   // XOR-erase old row
-          q_.push_back({Cmd::Draw, ops[i], ""});      // XOR-draw new row
-        }
+        if (ops[i].f != drawn_[i].f || ops[i].s != drawn_[i].s)
+          q_.push_back({Cmd::Draw, ops[i], ""});
     } else {
       q_.push_back({Cmd::Init, {}, ""});
       for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
@@ -173,16 +171,14 @@ private:
   // Returns false if the write was dropped so service() can restart the page.
   bool drawOp(const FrameOp& op) {
     if (op.t == 't') {
-      // Highlighted row: XOR a 64x7 solid bar (matches glyph height) so the row
-      // lights up, then XOR the text over it (glyphs toggle dark) -> inverse. Both
-      // are XOR, so re-running drawOp erases the row exactly (scroll erase-then-
-      // draw). The bar is graphics packets with no built-in trailing gap, so wait
-      // before the text write or the cluster drops it (rows vanished on 7px bars).
-      if (op.f & kFontHighlight) {
-        uint8_t bar[56]; memset(bar, 0xFF, sizeof(bar));
-        fis_.GraphicFromArray(0, op.y, 64, 7, bar, 1);       // 1 = XOR mode
-        delayMicroseconds(5000);                             // settle before text
-      }
+      // Overwrite the whole 64x7 row background first, in REPLACE mode (graphics
+      // mode 2, not XOR): 0xFF = lit bar for a highlighted row, 0x00 = blank
+      // otherwise. This is authoritative — it wipes whatever was there (old text,
+      // a dropped/half-drawn row), so redrawing a row REPAIRS it; no XOR erase, no
+      // desync. Then XOR the text: dark on a lit bg (inverse), lit on a dark bg.
+      uint8_t bg[56]; memset(bg, (op.f & kFontHighlight) ? 0xFF : 0x00, sizeof(bg));
+      fis_.GraphicFromArray(0, op.y, 64, 7, bg, 2);          // 2 = replace mode
+      delayMicroseconds(5000);                               // settle before text
       return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
     uint8_t buf[1024];
