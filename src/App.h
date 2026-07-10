@@ -62,6 +62,7 @@ private:
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
+  std::vector<std::string> wrapText(const std::string& s, int width, int maxLines) const;  // word-wrap
   int  screenItemCount() const;
   std::string marquee(const std::string& s, int width = kWin) const;
 

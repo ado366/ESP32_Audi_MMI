@@ -413,13 +413,15 @@ void App::renderDiag() {
 
   if (screen_ == Screen::DiagFaults) {
     display_.beginFullScreen(true);
-    display_.drawText(0, 0, kFontCentered, "FAULTS");
-    if (!faultsLoaded_) { display_.drawText(0, 20, kFontCompressedLeft, "READING..."); return; }
-    if (faults_.empty()) { display_.drawText(0, 20, kFontCompressedLeft, "NO FAULTS"); return; }
-
     int n = static_cast<int>(faults_.size());
-    const int visible = 5;                       // fault rows + CLEAR ALL, windowed
-    int total = n + 1;
+    std::snprintf(l, sizeof(l), "FAULTS %d", n);      // count in the header
+    display_.drawText(0, 0, kFontCentered, l);
+    if (!faultsLoaded_) { display_.drawText(0, 20, kFontCompressedLeft, "READING..."); return; }
+    if (faults_.empty()) { display_.drawText(0, 24, kFontCentered, "NO FAULTS"); return; }
+
+    // Fault-code list (windowed); bottom 3 lines show the selected fault's text.
+    const int total = n + 1;                          // + CLEAR ALL row
+    const int visible = 4, listTop = 11, rowH = 10;
     int start = listIndex_ - visible / 2;
     if (start < 0) start = 0;
     if (start > total - visible) start = total - visible < 0 ? 0 : total - visible;
@@ -427,13 +429,26 @@ void App::renderDiag() {
       int i = start + r;
       if (i < n) std::snprintf(l, sizeof(l), " %05u%s", faults_[i].code, faults_[i].sporadic ? " *" : "");
       else       std::snprintf(l, sizeof(l), " CLEAR ALL");
-      display_.drawText(0, static_cast<uint8_t>(14 + r * 9),
+      display_.drawText(0, static_cast<uint8_t>(listTop + r * rowH),
                         i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, l);
     }
-    // Description of the highlighted fault scrolls along the bottom line.
+    // Scrollbar (right edge) when the list doesn't all fit: track + thumb.
+    if (total > visible) {
+      const int barH = visible * rowH;
+      int thumbH = barH * visible / total; if (thumbH < 5) thumbH = 5;
+      int denom = total - visible; if (denom < 1) denom = 1;
+      int thumbOff = (barH - thumbH) * start / denom;
+      uint8_t bar[64];
+      for (int r = 0; r < barH && r < 64; ++r)
+        bar[r] = (r >= thumbOff && r < thumbOff + thumbH) ? 0x1E : 0x04;  // 8px field: thumb 4px, track 1px
+      display_.drawBitmap(56, static_cast<uint8_t>(listTop), 8, static_cast<uint8_t>(barH), bar);
+    }
+    // Selected fault's description, word-wrapped across the last 3 lines.
     if (listIndex_ < n) {
       const char* desc = dtcDescription(faults_[listIndex_].code);
-      display_.drawText(0, 68, kFontCompressedLeft, marquee(desc ? desc : "NO DESCRIPTION", 12).c_str());
+      auto lines = wrapText(desc ? desc : "NO DESCRIPTION", 15, 3);
+      for (size_t i = 0; i < lines.size(); ++i)
+        display_.drawText(0, static_cast<uint8_t>(64 + i * 8), kFontCompressedLeft, lines[i].c_str());
     }
     return;
   }
@@ -494,18 +509,48 @@ void App::renderDiag() {
   display_.beginFullScreen(true);
   std::snprintf(l, sizeof(l), "%s %u", header, static_cast<unsigned>(readGroup_));
   display_.drawText(0, 0, kFontCentered, l);
-  const int kDiagTop = 30, kMeasH = 14;
+  const int kDiagTop = 25, kLineH = 8;   // 7px glyph + 1px gap between every line
   for (int i = 0; i < group_.count && i < 4; ++i) {
-    int y = kDiagTop + i * kMeasH;
-    if (y + 7 > 88) break;
-    display_.drawText(0, static_cast<uint8_t>(y),     kFontCompressedLeft, group_.values[i].label.c_str());   // description
-    display_.drawText(0, static_cast<uint8_t>(y + 7), kFontCompressedLeft, fmt(group_.values[i]).c_str());     // value
+    int y = kDiagTop + i * kLineH * 2;
+    if (y + kLineH + 7 > 88) break;
+    display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, group_.values[i].label.c_str()); // description
+    display_.drawText(0, static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, fmt(group_.values[i]).c_str());   // value
   }
 }
 
 // Fit "label value" into the compressed-font row width: keep the value in full
 // (it's the point), truncate the label to fill the rest; if the value alone is
 // too wide, marquee it. ~15 compressed chars fit across the 64px screen.
+// Word-wrap a string into up to maxLines rows of at most `width` chars each.
+// Long words are hard-split; text past maxLines is dropped (with a trailing "…").
+std::vector<std::string> App::wrapText(const std::string& s, int width, int maxLines) const {
+  std::vector<std::string> out;
+  std::string cur;
+  size_t i = 0;
+  while (i < s.size() && (int)out.size() < maxLines) {
+    while (i < s.size() && s[i] == ' ') ++i;
+    size_t j = i; while (j < s.size() && s[j] != ' ') ++j;
+    std::string word = s.substr(i, j - i); i = j;
+    if (word.empty()) continue;
+    while ((int)word.size() > width) {                 // hard-split over-long word
+      if (cur.empty()) { out.push_back(word.substr(0, width)); word = word.substr(width); }
+      else { out.push_back(cur); cur.clear(); }
+      if ((int)out.size() >= maxLines) break;
+    }
+    if ((int)out.size() >= maxLines) break;
+    if (cur.empty()) cur = word;
+    else if ((int)(cur.size() + 1 + word.size()) <= width) cur += " " + word;
+    else { out.push_back(cur); cur = word; }
+  }
+  if (!cur.empty() && (int)out.size() < maxLines) out.push_back(cur);
+  if (i < s.size() && !out.empty()) {                  // more text than fits -> mark it
+    std::string& last = out.back();
+    if ((int)last.size() > width - 2) last = last.substr(0, width - 2);
+    last += "..";
+  }
+  return out;
+}
+
 std::string App::fitRow(const std::string& label, const std::string& value) const {
   const int kCols = 15;
   if ((int)value.size() >= kCols) return marquee(value, kCols);
