@@ -180,10 +180,8 @@ private:
       // Both writes are XOR, so re-running drawOp on the same op erases it exactly,
       // which is what the scroll erase-then-draw relies on. Strip the flag first.
       if (op.f & kFontHighlight) {
-        uint8_t bar[64]; memset(bar, 0xFF, sizeof(bar));        // 64x8 solid block
-        // Bar at the row's own y: covers the 7px glyph with the extra pixel BELOW
-        // it (padding under the text) rather than above — symmetric-looking.
-        fis_.GraphicFromArray(0, op.y, 64, 8, bar, 1);         // 1 = XOR mode
+        uint8_t bar[56]; memset(bar, 0xFF, sizeof(bar));        // 64x7 solid block (matches glyph height)
+        fis_.GraphicFromArray(0, op.y, 64, 7, bar, 1);         // 1 = XOR mode
       }
       return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }

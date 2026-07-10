@@ -491,7 +491,7 @@ if (sizex == 64) // send jumbo packets
         }
         if ((sizey*8)%JUMBO_PACKET_SIZE>0){//few bytes left to be sent
                 uint8_t line = 4*(sizey/4);
-                GraphicOut(x,line+y,JUMBO_PACKET_SIZE-(sizey*8)%JUMBO_PACKET_SIZE,data+(line*8),mode);//4=32/8
+                GraphicOut(x,line+y,(sizey*8)%JUMBO_PACKET_SIZE,data+(line*8),mode);//4=32/8
         }
 }
 else
@@ -515,7 +515,7 @@ if (sizex == 64) // send jumbo packets
         }
         if ((sizey*8)%JUMBO_PACKET_SIZE>0){//few bytes left to be sent
                 uint8_t line = 4*(sizey/4);
-                GraphicOut(x,line+y,JUMBO_PACKET_SIZE-(sizey*8)%JUMBO_PACKET_SIZE,data+(line*8),mode);//4=32/8
+                GraphicOut(x,line+y,(sizey*8)%JUMBO_PACKET_SIZE,data+(line*8),mode);//4=32/8
         }
 }
 else
@@ -539,7 +539,7 @@ if (sizex == 64) // send jumbo packets
         }
     if ((sizey*8)%JUMBO_PACKET_SIZE>0){//few bytes left to be sent
         uint8_t line = 4*(sizey/4);
-                GraphicOut(x,line+y,JUMBO_PACKET_SIZE-(sizey*8)%JUMBO_PACKET_SIZE,&data[line*8],mode);//4=32/8
+                GraphicOut(x,line+y,(sizey*8)%JUMBO_PACKET_SIZE,&data[line*8],mode);//4=32/8
         }
 }
 else 
