@@ -119,7 +119,9 @@ void App::tick(uint32_t nowMs) {
   // Live diagnostics polling. Groups refresh fast; faults are read (async on
   // hardware) at a slower cadence.
   if (isDiagScreen()) {
-    uint32_t interval = (screen_ == Screen::DiagFaults) ? 400u : 150u;
+    uint32_t interval = (screen_ == Screen::DiagFaults) ? 400u
+                      : (screen_ == Screen::Speedo)     ? 250u    // FIS bitmap send is slow; don't outpace it
+                      : 150u;
     if (now_ - lastSample_ > interval) {
       lastSample_ = now_;
       if (screen_ == Screen::DiagFaults) { if (diag_.readFaults(readEcu_, faults_)) faultsLoaded_ = true; }
@@ -440,9 +442,9 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    display_.drawText(0, 10, kFontCentered, "KM/H");     // top 1/3
-    auto bmp = SpeedoRenderer::render(spd, 64, 40);
-    display_.drawBitmap(0, 36, 64, 40, bmp.data());      // bottom 2/3, big 7-seg digits (1:2)
+    display_.drawText(0, 12, kFontCentered, "KM/H");     // top 1/3
+    auto bmp = SpeedoRenderer::render(spd, 64, 20);
+    display_.drawBitmap(0, 46, 64, 20, bmp.data());      // bottom 2/3, 7-seg digits (~half size)
     return;
   }
 

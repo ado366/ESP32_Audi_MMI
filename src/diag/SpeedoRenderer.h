@@ -43,7 +43,7 @@ struct SpeedoRenderer {
     std::vector<uint8_t> b((w * h + 7) / 8, 0);
     char s[8]; snprintf(s, sizeof(s), "%d", value < 0 ? 0 : (value > 999 ? 999 : value));
     int n = (int)strlen(s);
-    const int field = 3, dw = 20, gap = 1, t = 3;     // dw x h ~ 1:2 (not stretched); 3 fit in 64
+    const int field = 3, dw = 10, gap = 3, t = 2;     // ~half size (10 x h); FIS bitmaps are slow
     int totalW = field * dw + (field - 1) * gap;      // width of a 3-digit field
     int x0 = (w - totalW) / 2; if (x0 < 0) x0 = 0;
     int startCell = field - n;                        // right-align the actual digits
