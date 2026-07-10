@@ -32,8 +32,16 @@ inline const DtcDesc kDtcTable[] = {
   { 17964, "CHARGE PRESS CTRL (P1556)" },
 };
 
-// Returns the description for a code, or nullptr if not in the table.
+// Optional external lookup (ESP32 registers a SPIFFS-backed full VAG table). It
+// returns a pointer to a static buffer valid until the next call, or nullptr.
+using DtcLookupFn = const char* (*)(uint16_t code);
+inline DtcLookupFn& dtcLookupFn() { static DtcLookupFn fn = nullptr; return fn; }
+inline void setDtcLookup(DtcLookupFn fn) { dtcLookupFn() = fn; }
+
+// Returns the description for a code, or nullptr if unknown. Prefers the external
+// (full) table when registered, else the built-in EDC15 starter set.
 inline const char* dtcDescription(uint16_t code) {
+  if (auto fn = dtcLookupFn()) { if (const char* s = fn(code)) return s; }
   for (const auto& d : kDtcTable) if (d.code == code) return d.text;
   return nullptr;
 }

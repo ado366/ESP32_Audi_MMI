@@ -5,12 +5,14 @@
 #pragma once
 #include "../../Config.h"
 #include "../../ui/WebUi.h"
+#include "../../diag/DtcDescriptions.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <Update.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
+#include <SPIFFS.h>
 #include <string>
 #include <functional>
 #include <vector>
@@ -80,6 +82,12 @@ public:
       if (kwpTest_) kwpTest_((uint8_t)ecu, (uint8_t)grp);
       server_.send(200, "text/plain", "connecting; read /kwpdbg");
     });
+    // Look up a fault-code description (?code=<hex>) — verifies the SPIFFS DB.
+    server_.on("/desc", HTTP_GET, [this]() {
+      uint16_t code = (uint16_t)strtol(server_.arg("code").c_str(), nullptr, 16);
+      const char* d = dtcDescription(code);
+      server_.send(200, "text/plain", d ? d : "(not found)");
+    });
     // BC127 raw command console: send a command, watch recent module traffic.
     server_.on("/bc127", HTTP_GET, [this]() {
       if (!authed()) return;
@@ -111,6 +119,18 @@ public:
         delay(400); ESP.restart();
       },
       [this]() { handleUpload(); });               // on each chunk
+
+    // Upload the fault-description DB to SPIFFS (/faults.bin) over WiFi. Needs auth.
+    server_.on("/descupload", HTTP_POST,
+      [this]() {
+        server_.send(200, "text/plain", descOk_ ? "OK, /faults.bin written" : "FAIL");
+      },
+      [this]() {
+        HTTPUpload& up = server_.upload();
+        if (up.status == UPLOAD_FILE_START) { descOk_ = false; descFile_ = SPIFFS.open("/faults.bin", "w"); }
+        else if (up.status == UPLOAD_FILE_WRITE) { if (descFile_) descFile_.write(up.buf, up.currentSize); }
+        else if (up.status == UPLOAD_FILE_END)   { if (descFile_) { descFile_.close(); descOk_ = true; } }
+      });
 
     server_.begin();
     apUp_ = true;
@@ -185,6 +205,8 @@ private:
   WebServer   server_{80};
   std::string user_, otaPass_;
   bool        apUp_ = false;
+  File        descFile_;             // /faults.bin upload in progress
+  bool        descOk_ = false;
   std::function<std::string()> statusFn_;
   std::function<void(const std::string&)> bcSend_;
   std::function<std::string()> bcLog_;

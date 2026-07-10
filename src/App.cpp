@@ -488,14 +488,30 @@ void App::renderDiag() {
     return;
   }
 
-  // MultiValue: up to 4 label:value rows.
+  // MultiValue: description and value on SEPARATE rows (both shown in full, no
+  // truncation), the block shifted into the lower area so the first value sits
+  // below the FIS 2/3 divider. kDiagTop/kMeasH are tuned for the B5 cluster.
   display_.beginFullScreen(true);
   std::snprintf(l, sizeof(l), "%s %u", header, static_cast<unsigned>(readGroup_));
   display_.drawText(0, 0, kFontCentered, l);
+  const int kDiagTop = 30, kMeasH = 14;
   for (int i = 0; i < group_.count && i < 4; ++i) {
-    std::snprintf(l, sizeof(l), "%s %s", group_.values[i].label.c_str(), fmt(group_.values[i]).c_str());
-    display_.drawText(0, static_cast<uint8_t>(20 + i * 10), kFontCompressedLeft, l);
+    int y = kDiagTop + i * kMeasH;
+    if (y + 7 > 88) break;
+    display_.drawText(0, static_cast<uint8_t>(y),     kFontCompressedLeft, group_.values[i].label.c_str());   // description
+    display_.drawText(0, static_cast<uint8_t>(y + 7), kFontCompressedLeft, fmt(group_.values[i]).c_str());     // value
   }
+}
+
+// Fit "label value" into the compressed-font row width: keep the value in full
+// (it's the point), truncate the label to fill the rest; if the value alone is
+// too wide, marquee it. ~15 compressed chars fit across the 64px screen.
+std::string App::fitRow(const std::string& label, const std::string& value) const {
+  const int kCols = 15;
+  if ((int)value.size() >= kCols) return marquee(value, kCols);
+  int labMax = kCols - (int)value.size() - 1;
+  std::string lab = (int)label.size() > labMax ? label.substr(0, labMax) : label;
+  return lab + " " + value;
 }
 
 void App::renderScreen() {

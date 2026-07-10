@@ -9,6 +9,7 @@
 #include "hal/esp32/OtaManager.h"
 #include "hal/esp32/Esp32System.h"
 #include "hal/esp32/Esp32Radio.h"
+#include "hal/esp32/FaultDb.h"
 #ifdef MMI_PROVISION
 #include "Secrets.h"   // real WiFi creds — only in the USB provisioning build
 #endif
@@ -57,6 +58,7 @@ void setup() {
   // boot. (Also reachable any time via encoder long-press -> Debug -> Calibrate.)
   bool needCal = inputs.calibrationRequested();
   diag.begin();   // starts the KWP reader task on core 0
+  FaultDb::begin();   // mount SPIFFS; register full VAG fault descriptions if uploaded
 
   // Secured WiFi AP + OTA (credentials from NVS, with safe defaults).
   std::string ssid, pass, otaPass, homeSsid, homePass;
