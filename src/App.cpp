@@ -128,7 +128,9 @@ void App::tick(uint32_t nowMs) {
     }
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
-      screen_ == Screen::DiagFaults || screen_ == Screen::Speedo) dirty_ = true; // live (marquee / speedo sweep)
+      screen_ == Screen::DiagFaults) dirty_ = true; // live (fault-desc marquee)
+  // Speedo renders on its 150ms sample (isDiagScreen); the display redraws the
+  // big bitmap only when the km/h value actually changes, so no per-tick churn.
 
   if (scrolling_) dirty_ = true;
   if (dirty_) render();
@@ -439,8 +441,8 @@ void App::renderDiag() {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
     display_.drawText(0, 10, kFontCentered, "KM/H");     // top 1/3
-    auto bmp = SpeedoRenderer::render(spd, 64, 52);
-    display_.drawBitmap(0, 32, 64, 52, bmp.data());      // bottom 2/3, big 7-seg digits
+    auto bmp = SpeedoRenderer::render(spd, 64, 40);
+    display_.drawBitmap(0, 36, 64, 40, bmp.data());      // bottom 2/3, big 7-seg digits (1:2)
     return;
   }
 
