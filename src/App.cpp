@@ -225,7 +225,8 @@ bool App::handleScreen(Action a) {
   }
   if (screen_ == Screen::Speedo) {
     if (a == Action::Back) { screen_ = Screen::None; speedoTest_ = false; dirty_ = true; }
-    else if (a == Action::Select) { speedoTest_ = !speedoTest_; dirty_ = true; }  // toggle 0-200 sweep
+    // Bench sweep disabled. Re-enable to check digit drawing without the car:
+    // else if (a == Action::Select) { speedoTest_ = !speedoTest_; dirty_ = true; }  // toggle 0-200 sweep
     return true; // consume nav
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
