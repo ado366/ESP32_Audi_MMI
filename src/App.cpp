@@ -32,6 +32,10 @@ void App::begin() {
   presets_.load(storage_);
   oneDevice_ = storage_.getInt("bt.single", 0) != 0;  // default OFF
   bt_.setSingleDevice(oneDevice_);
+  adaptInit_  = storage_.getInt("kwp.init",  200);    // per-vehicle KWP timing
+  adaptByte_  = storage_.getInt("kwp.byte",  0);
+  adaptFrame_ = storage_.getInt("kwp.frame", 0);
+  diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);
   bt_.onStatusChanged([this]() { dirty_ = true; });
   menu_.onSelect([this](MenuId id) { onMenuSelect(id); });
   dirty_ = true;
@@ -229,6 +233,15 @@ bool App::handleScreen(Action a) {
     // else if (a == Action::Select) { speedoTest_ = !speedoTest_; dirty_ = true; }  // toggle 0-200 sweep
     return true; // consume nav
   }
+  if (screen_ == Screen::Adapt) {
+    switch (a) {
+      case Action::ScrollDown: adaptAdjust(+1); return true;   // CW = increase
+      case Action::ScrollUp:   adaptAdjust(-1); return true;
+      case Action::Select:
+      case Action::Back:       adaptSave(); screen_ = Screen::None; dirty_ = true; return true;
+      default: return true;   // consume nav so it doesn't leak to the menu
+    }
+  }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
     if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
@@ -386,6 +399,11 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
 
+    // ---- Adaptation (per-vehicle KWP timing) ----
+    case MenuId::AdaptInit:      adaptField_ = 0; openScreen(Screen::Adapt); break;
+    case MenuId::AdaptByte:      adaptField_ = 1; openScreen(Screen::Adapt); break;
+    case MenuId::AdaptFrame:     adaptField_ = 2; openScreen(Screen::Adapt); break;
+
     // ---- Debug ----
     case MenuId::DbgMicTest:      openScreen(Screen::MicTest);        break;
     case MenuId::DbgButtonMonitor:openScreen(Screen::ButtonMonitor);  break;
@@ -411,6 +429,28 @@ void App::onMenuSelect(MenuId id) {
 void App::showInfo(const char* title, std::vector<std::string> lines) {
   infoTitle_ = title; infoLines_ = std::move(lines);
   screen_ = Screen::Info; dirty_ = true;
+}
+
+// Adaptation timing editor. Field 0=init pulse, 1=inter-byte, 2=inter-frame.
+void App::adaptAdjust(int dir) {
+  int* v; int lo, hi, step;
+  switch (adaptField_) {
+    case 0:  v = &adaptInit_;  lo = 180; hi = 220; step = 1; break;   // 5-baud bit period
+    case 1:  v = &adaptByte_;  lo = 0;   hi = 25;  step = 1; break;   // inter-byte W4
+    default: v = &adaptFrame_; lo = 0;   hi = 100; step = 5; break;   // inter-frame W3
+  }
+  *v += dir * step;
+  if (*v < lo) *v = lo; if (*v > hi) *v = hi;
+  diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);               // live-apply while adjusting
+  dirty_ = true;
+}
+
+void App::adaptSave() {
+  storage_.putInt("kwp.init",  adaptInit_);
+  storage_.putInt("kwp.byte",  adaptByte_);
+  storage_.putInt("kwp.frame", adaptFrame_);
+  storage_.commit();
+  diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);
 }
 
 // ---- diagnostics sampling + rendering ----
@@ -637,6 +677,18 @@ void App::renderScreen() {
     display_.drawText(0, 32, kFontCompressedLeft, l);
     display_.drawText(0, 48, kFontCompressedLeft, micLoop_ ? "SEL=STOP LOOP" : "SEL=LOOPBACK");
     display_.drawText(0, 60, kFontCompressedLeft, "ROT=GAIN");
+    return;
+  }
+  if (screen_ == Screen::Adapt) {
+    const char* name = adaptField_ == 0 ? "INIT PULSE"
+                     : adaptField_ == 1 ? "INTER-BYTE" : "INTER-FRAME";
+    int val = adaptField_ == 0 ? adaptInit_ : adaptField_ == 1 ? adaptByte_ : adaptFrame_;
+    display_.drawText(0, 0, kFontCentered, name);
+    char l[24];
+    std::snprintf(l, sizeof(l), "%d MS", val);
+    display_.drawText(0, 28, kFontCentered, l);
+    display_.drawText(0, 60, kFontCompressedLeft, "ROT=ADJUST");
+    display_.drawText(0, 72, kFontCompressedLeft, "SEL=SAVE");
     return;
   }
   if (screen_ == Screen::ButtonMonitor) {

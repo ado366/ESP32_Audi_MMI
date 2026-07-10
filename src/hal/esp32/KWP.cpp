@@ -446,7 +446,7 @@ void KWP::send5baud(uint8_t data) {
   }
   for (int i=0; i < bitcount+1; i++){
     if (i != 0){
-      delay(200);
+      delay(initBitMs_);                // 5-baud bit period (Adaptation: init pulse)
       if (i == bitcount) break;
     }
     if (bits[i] == 1){
@@ -470,8 +470,10 @@ bool KWP::KWPSendBlock(char *s, int size) {
     Serial.print(" ");
   }
   Serial.println();
+  if (blockDelayMs_ > 0) delay(blockDelayMs_);        // W3 inter-frame pause before our block (Adaptation)
   for (int i=0; i < size; i++){
     uint8_t data = s[i];
+    if (i > 0 && interByteMs_ > 0) delay(interByteMs_); // W4 inter-byte pause (Adaptation)
     obdWrite(data);
     if (i < size-1){
       uint8_t complement = obdRead();
@@ -523,6 +525,7 @@ bool KWP::KWPReceiveBlock(char s[], int maxsize, int &size, bool init_delay) {
         }
       }
       if ( ((!ackeachbyte) && (recvcount == size)) ||  ((ackeachbyte) && (recvcount < size)) ){
+        if (interByteMs_ > 0) delay(interByteMs_);   // W4 inter-byte pause (Adaptation)
         obdWrite(data ^ 0xFF);
       }
       timeout = millis() + 1000;

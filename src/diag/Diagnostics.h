@@ -65,6 +65,8 @@ public:
   // Read / clear stored fault codes.
   virtual bool readFaults(uint8_t ecuAddr, std::vector<Dtc>& out) = 0;
   virtual bool clearFaults(uint8_t ecuAddr) = 0;
+  // Per-vehicle KWP1281 timing (Maxi-K Adaptation). Default no-op (emulator).
+  virtual void setTiming(int initBitMs, int interByteMs, int blockDelayMs) {}
 };
 
 } // namespace mmi

@@ -42,6 +42,7 @@ private:
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
     DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults, Speedo,
     SelectEcu, // pick the KWP module to talk to
+    Adapt,     // per-vehicle KWP timing adjuster (init pulse / inter-byte / inter-frame)
     Info   // generic title + text lines (version, confirmations, placeholders)
   };
 
@@ -62,6 +63,8 @@ private:
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
+  void adaptAdjust(int dir);       // change the selected Adaptation timing field
+  void adaptSave();                // persist + apply KWP timing
   std::vector<std::string> wrapText(const std::string& s, int width, int maxLines) const;  // word-wrap
   int  screenItemCount() const;
   std::string marquee(const std::string& s, int width = kWin) const;
@@ -95,6 +98,10 @@ private:
   bool               faultsLoaded_ = false;
   bool               oneDevice_ = false;     // single-active-device enforcement (persisted)
   bool               speedoTest_ = false;    // speedo bench-test sweep 0..200
+  int                adaptInit_ = 200;       // KWP 5-baud bit period (ms), persisted
+  int                adaptByte_ = 0;         // KWP inter-byte W4 (ms), persisted
+  int                adaptFrame_ = 0;        // KWP inter-frame W3 (ms), persisted
+  int                adaptField_ = 0;        // which field the Adapt screen edits (0/1/2)
   uint32_t           lastSample_ = 0;
   // Add-to-favourites name picker (Maxi-K style)
   Preset             pendingPreset_;

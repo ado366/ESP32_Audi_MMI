@@ -41,6 +41,15 @@ class KWP {
     bool isConnected();
     uint8_t getCurrAddr();
     String probe(int rxPin = -1, int txPin = -1);   // K-line loopback self-test (writes result to dbg)
+    // Per-vehicle KWP1281 timing (Maxi-K "Adaptation"). initBitMs = 5-baud bit
+    // period (~200); interByteMs = inter-byte W4 pause before each complement ACK
+    // (0 = as fast as possible; raise it if an ECU drops blocks); blockDelayMs =
+    // inter-frame W3 pause before sending a request/ack block.
+    void setTiming(int initBitMs, int interByteMs, int blockDelayMs) {
+      if (initBitMs  > 0) initBitMs_  = initBitMs;
+      if (interByteMs >= 0) interByteMs_ = interByteMs;
+      if (blockDelayMs >= 0) blockDelayMs_ = blockDelayMs;
+    }
     String dbg;   // recent connect-flow trace, surfaced over WiFi for on-car debug
     // KWP1281 stored fault codes. readFaultCodes returns the count read (or -1 on
     // comms error); each DTC is a 16-bit code + 1-byte elaboration/status.
@@ -53,6 +62,9 @@ class KWP {
     bool connected = false;
     uint8_t currAddr = 0;
     uint8_t blockCounter = 0;
+    volatile int initBitMs_ = 200;    // 5-baud bit period (Adaptation: init pulse)
+    volatile int interByteMs_ = 0;    // W4 pause before each complement ACK (inter-byte)
+    volatile int blockDelayMs_ = 0;   // W3 pause before sending a block (inter-frame)
     uint8_t errorTimeout = 0;
     uint8_t errorData = 0;
 

@@ -46,6 +46,9 @@ public:
     return ok;
   }
   bool clearFaults(uint8_t ecuAddr) override { faultEcu_ = ecuAddr; clearReq_ = true; return true; }
+  void setTiming(int initBitMs, int interByteMs, int blockDelayMs) override {
+    kwp_.setTiming(initBitMs, interByteMs, blockDelayMs);
+  }
 
 private:
   static void thunk(void* p) { static_cast<Esp32Diag*>(p)->taskLoop(); }
