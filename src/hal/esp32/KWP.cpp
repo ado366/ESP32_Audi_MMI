@@ -60,6 +60,33 @@ uint8_t KWP::getCurrAddr() {
   return currAddr;
 }
 
+// K-line loopback self-test. On a correctly-wired half-duplex K-line, a byte we
+// transmit appears back on RX (the line reflects it). No echo => TX and RX are
+// not both on the K-line (bad pins / transceiver / wiring).
+String KWP::probe(int rxPin, int txPin) {
+  connected = false;
+  uint8_t rx = rxPin < 0 ? _OBD_RX_PIN : (uint8_t)rxPin;
+  uint8_t tx = txPin < 0 ? _OBD_TX_PIN : (uint8_t)txPin;
+  Serial2.begin(10400, SERIAL_8N1, rx, tx);
+  delay(20);
+  while (Serial2.available()) Serial2.read();          // drain
+  Serial2.write(0xAA);
+  Serial2.flush();
+  unsigned long t = millis();
+  uint8_t got[8]; int n = 0;
+  while (millis() - t < 250 && n < 8) { if (Serial2.available()) got[n++] = (uint8_t)Serial2.read(); }
+  char db[64];
+  snprintf(db, sizeof(db), "probe rx=%d tx=%d sent=AA got=%d:", rx, tx, n);
+  String s = db;
+  for (int i = 0; i < n; i++) { char b[6]; snprintf(b, sizeof(b), " %02X", got[i]); s += b; }
+  if (n == 0)                    s += "\nNO ECHO -> TX/RX not on the K-line (pins/transceiver)";
+  else if (got[0] == 0xAA)       s += "\nECHO OK -> K-line wired; issue is init/baud/polarity";
+  else                           s += "\nGARBLED echo -> wrong baud/inversion";
+  Serial2.end();
+  dbg = s;
+  return s;
+}
+
 // KWP1281: request stored fault codes (title 0x07). The ECU replies with one or
 // more 0xFC blocks (3 bytes per DTC: code hi, code lo, elaboration); we ACK
 // (0x09) after each until the ECU sends a plain 0x09 (no more).

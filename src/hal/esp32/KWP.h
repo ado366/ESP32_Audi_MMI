@@ -40,6 +40,7 @@ class KWP {
     String getBlockDesc(uint8_t addr, int block);
     bool isConnected();
     uint8_t getCurrAddr();
+    String probe(int rxPin = -1, int txPin = -1);   // K-line loopback self-test (writes result to dbg)
     String dbg;   // recent connect-flow trace, surfaced over WiFi for on-car debug
     // KWP1281 stored fault codes. readFaultCodes returns the count read (or -1 on
     // comms error); each DTC is a 16-bit code + 1-byte elaboration/status.

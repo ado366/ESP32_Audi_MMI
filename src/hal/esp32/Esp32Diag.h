@@ -22,6 +22,7 @@ public:
 
   bool isConnected() const override { return connected_; }
   std::string kwpDebug() const { return std::string(kwp_.dbg.c_str()); }  // connect-flow trace
+  void requestProbe(int rx = -1, int tx = -1) { probeRx_ = rx; probeTx_ = tx; probeReq_ = true; }
 
   bool readGroup(uint8_t ecuAddr, uint8_t group, Group& out) override {
     reqEcu_ = ecuAddr; reqGroup_ = group;      // hand the request to the task
@@ -56,6 +57,7 @@ private:
 
   void taskLoop() {
     for (;;) {
+      if (probeReq_) { probeReq_ = false; if (kwp_.isConnected()) kwp_.disconnect(); kwp_.probe(probeRx_, probeTx_); continue; }
       // Fault clear / read take priority and target their own ECU.
       if (clearReq_ || faultReq_) {
         uint8_t fe = faultEcu_;
@@ -109,7 +111,8 @@ private:
   std::vector<Dtc> faults_;
   volatile uint8_t reqEcu_ = 0, reqGroup_ = 0, curEcu_ = 0, curGroup_ = 0, faultEcu_ = 0;
   volatile bool connected_ = false, haveData_ = false;
-  volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false;
+  volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;
+  volatile int  probeRx_ = -1, probeTx_ = -1;
 };
 
 } // namespace mmi

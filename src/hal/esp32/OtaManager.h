@@ -65,6 +65,14 @@ public:
     server_.on("/kwpdbg", HTTP_GET, [this]() {
       server_.send(200, "text/plain", kwpLog_ ? kwpLog_().c_str() : "");
     });
+    // Trigger a K-line loopback self-test; result appears at /kwpdbg. Optional
+    // ?rx=<pin>&tx=<pin> tests other candidate pins (default = configured 5/0).
+    server_.on("/kwpprobe", HTTP_GET, [this]() {
+      int rx = server_.hasArg("rx") ? server_.arg("rx").toInt() : -1;
+      int tx = server_.hasArg("tx") ? server_.arg("tx").toInt() : -1;
+      if (kwpProbe_) kwpProbe_(rx, tx);
+      server_.send(200, "text/plain", "probing K-line; read /kwpdbg in ~1s");
+    });
     // BC127 raw command console: send a command, watch recent module traffic.
     server_.on("/bc127", HTTP_GET, [this]() {
       if (!authed()) return;
@@ -106,6 +114,7 @@ public:
   void setBc127Console(std::function<void(const std::string&)> send,
                        std::function<std::string()> log) { bcSend_ = std::move(send); bcLog_ = std::move(log); }
   void setKwpLog(std::function<std::string()> f) { kwpLog_ = std::move(f); }
+  void setKwpProbe(std::function<void(int,int)> f) { kwpProbe_ = std::move(f); }
   // Browser control/debug UI: state = display frame + BT json; sink injects inputs.
   void setControlHooks(std::function<std::string()> state,
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
@@ -172,6 +181,7 @@ private:
   std::function<void(const std::string&)> bcSend_;
   std::function<std::string()> bcLog_;
   std::function<std::string()> kwpLog_;
+  std::function<void(int,int)> kwpProbe_;
   std::function<std::string()> ctrlState_;
   std::function<void(Control, int)> ctrlSink_;
 };
