@@ -2,8 +2,19 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 
-
 #define DEBUG_LEVEL 1
+
+// The ported code prints per-byte/per-bit debug throughout the hot read path.
+// At 115200 baud that blocking I/O roughly triples measuring-block latency, so
+// route this file's bare `Serial` (NOT Serial2, the K-line) to a null sink. The
+// useful connect trace is kept via KWP::dbg -> /kwpdbg.
+struct KwpNullSerial {
+  template <class... A> void print(A...)   {}
+  template <class... A> void println(A...) {}
+  template <class... A> void write(A...)   {}
+};
+static KwpNullSerial kwpNull;
+#define Serial kwpNull
 
 //HardwareSerial Serial2(2);
 
