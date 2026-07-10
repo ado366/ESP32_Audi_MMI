@@ -21,6 +21,7 @@ public:
   }
 
   bool isConnected() const override { return connected_; }
+  std::string kwpDebug() const { return std::string(kwp_.dbg.c_str()); }  // connect-flow trace
 
   bool readGroup(uint8_t ecuAddr, uint8_t group, Group& out) override {
     reqEcu_ = ecuAddr; reqGroup_ = group;      // hand the request to the task

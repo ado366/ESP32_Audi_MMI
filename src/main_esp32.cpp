@@ -87,6 +87,7 @@ void setup() {
   });
   ota.setBc127Console([](const std::string& c) { bt.sendCommand(c); },
                       []() { return bt.recentLog(); });
+  ota.setKwpLog([]() { return diag.kwpDebug(); });   // KWP connect trace at /kwpdbg
   // Browser control/debug UI at http://192.168.4.1/control — drive the whole UI
   // from a computer (no car buttons needed) and see the live FIS.
   ota.setControlHooks(

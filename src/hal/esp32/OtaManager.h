@@ -61,6 +61,10 @@ public:
     server_.on("/status", HTTP_GET, [this]() {
       server_.send(200, "application/json", statusFn_ ? statusFn_().c_str() : "{}");
     });
+    // KWP connect-flow trace (plain text) for on-car diagnostics debugging.
+    server_.on("/kwpdbg", HTTP_GET, [this]() {
+      server_.send(200, "text/plain", kwpLog_ ? kwpLog_().c_str() : "");
+    });
     // BC127 raw command console: send a command, watch recent module traffic.
     server_.on("/bc127", HTTP_GET, [this]() {
       if (!authed()) return;
@@ -101,6 +105,7 @@ public:
   void setStatusProvider(std::function<std::string()> f) { statusFn_ = std::move(f); }
   void setBc127Console(std::function<void(const std::string&)> send,
                        std::function<std::string()> log) { bcSend_ = std::move(send); bcLog_ = std::move(log); }
+  void setKwpLog(std::function<std::string()> f) { kwpLog_ = std::move(f); }
   // Browser control/debug UI: state = display frame + BT json; sink injects inputs.
   void setControlHooks(std::function<std::string()> state,
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
@@ -166,6 +171,7 @@ private:
   std::function<std::string()> statusFn_;
   std::function<void(const std::string&)> bcSend_;
   std::function<std::string()> bcLog_;
+  std::function<std::string()> kwpLog_;
   std::function<std::string()> ctrlState_;
   std::function<void(Control, int)> ctrlSink_;
 };

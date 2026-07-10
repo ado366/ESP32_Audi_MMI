@@ -27,28 +27,32 @@ KWP::~KWP(){
 }
 
 bool KWP::connect(uint8_t addr, int baudrate) {
-  Serial.print(F("------connect addr="));
-  Serial.print(addr);
-  Serial.print(F(" baud="));
-  Serial.println(baudrate);
+  char db[80];
+  snprintf(db, sizeof(db), "connect a=%02X b=%d rx=%d tx=%d\n", addr, baudrate, _OBD_RX_PIN, _OBD_TX_PIN);
+  dbg = db;
   blockCounter = 0;
   pinMode(_OBD_TX_PIN, OUTPUT);
   KWP5BaudInit(addr);
+  dbg += "5baud sent, waiting reply...\n";
   Serial2.begin(baudrate, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
   char s[3];
   int size = 3;
-  if (!KWPReceiveBlock(s, 3, size)) return false;
+  if (!KWPReceiveBlock(s, 3, size)) { dbg += "no reply (KWPReceiveBlock timeout)\n"; return false; }
+  snprintf(db, sizeof(db), "got magic %02X %02X %02X\n", (uint8_t)s[0], (uint8_t)s[1], (uint8_t)s[2]);
+  dbg += db;
   if (    (((uint8_t)s[0]) != 0x55)
      ||   (((uint8_t)s[1]) != 0x01)
      ||   (((uint8_t)s[2]) != 0x8A)   ){
-    Serial.println(F("ERROR: invalid magic"));
+    dbg += "ERROR: invalid magic (want 55 01 8A)\n";
     disconnect();
     errorData++;
     return false;
   }
   connected = true;
   currAddr = addr;
-  if (!readConnectBlocks()) return false;
+  dbg += "magic OK, reading connect blocks...\n";
+  if (!readConnectBlocks()) { dbg += "readConnectBlocks failed\n"; return false; }
+  dbg += "CONNECTED\n";
   return true;
 }
 
