@@ -81,18 +81,7 @@ public:
     if (!q_.empty()) return;                    // never interrupt an in-flight redraw
     const auto& ops = rec_.ops();
     uint32_t now = millis();
-    if (fullValid_ && opsEqual(ops, drawn_)) {
-      // Nothing changed. If we did XOR partial updates while scrolling, do ONE
-      // authoritative full redraw once things go quiet, to correct any desync
-      // (a dropped bar/text write) that would otherwise persist. Flashes once,
-      // only after scrolling stops — not periodically.
-      if (needHeal_ && (uint32_t)(now - lastRedraw_) >= kSettleMs) {
-        q_.push_back({Cmd::Init, {}, ""});
-        for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
-        needHeal_ = false; lastRedraw_ = now;
-      }
-      return;
-    }
+    if (fullValid_ && opsEqual(ops, drawn_)) return;
     // Bound redraw frequency so a fast scroll doesn't repaint every few ms.
     if (fullValid_ && (uint32_t)(now - lastRedraw_) < kRedrawMinMs) return;
 
@@ -106,11 +95,9 @@ public:
           q_.push_back({Cmd::Draw, drawn_[i], ""});   // XOR-erase old row
           q_.push_back({Cmd::Draw, ops[i], ""});      // XOR-draw new row
         }
-      needHeal_ = true;                               // schedule an authoritative heal
     } else {
       q_.push_back({Cmd::Init, {}, ""});
       for (const auto& op : ops) q_.push_back({Cmd::Draw, op, ""});
-      needHeal_ = false;
     }
     drawn_ = ops; fullValid_ = true; lastRedraw_ = now;
   }
@@ -194,7 +181,7 @@ private:
       if (op.f & kFontHighlight) {
         uint8_t bar[56]; memset(bar, 0xFF, sizeof(bar));
         fis_.GraphicFromArray(0, op.y, 64, 7, bar, 1);       // 1 = XOR mode
-        delayMicroseconds(2000);                             // settle before text
+        delayMicroseconds(5000);                             // settle before text
       }
       return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
@@ -208,10 +195,9 @@ private:
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
-  static constexpr uint32_t kGapMs       = 5;    // gap AFTER each FIS write (VAGFISPages value)
+  static constexpr uint32_t kGapMs       = 14;   // gap AFTER each FIS write so the cluster can render it
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
-  static constexpr uint32_t kSettleMs    = 300;  // after scroll stops, one heal redraw
   static constexpr uint8_t  kMaxRestarts = 6;    // bound page-redraw restarts on write failure
 
   VAGFISWriter fis_;
@@ -225,7 +211,6 @@ private:
   bool haveTop_ = false, haveWritten_ = false;
   uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts
   uint32_t writeFails_ = 0;         // total dropped FIS writes (diagnostics)
-  bool needHeal_ = false;           // a partial (XOR) update happened; heal when quiet
 };
 
 } // namespace mmi
