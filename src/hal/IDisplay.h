@@ -16,6 +16,14 @@ constexpr uint8_t kFontLeft              = 0x01; // standard, positive, left
 constexpr uint8_t kFontCentered          = 0x21; // standard, positive, centered
 constexpr uint8_t kFontCompressedLeft    = 0x05; // compressed, positive, left
 constexpr uint8_t kFontCompressedCenter  = 0x25; // compressed, positive, centered
+// Display-layer flag (NOT a FIS font bit): OR onto a base font to mark a row as
+// "highlighted". The esp32 display expands it into a filled inverse bar (XOR) +
+// the text drawn over it (XOR -> dark glyphs on a lit bar), and strips the flag
+// before it reaches the FIS. Because the op stays a single text op, the flash-
+// free XOR erase-then-draw scroll path still applies. The browser mirror draws a
+// red bar + dark text for it.
+constexpr uint8_t kFontHighlight         = 0x40; // e.g. kFontCompressedLeft | kFontHighlight
+
 // Kept for reference only — do NOT use, these render blank on this cluster:
 constexpr uint8_t kFontInvertedLeft      = 0x00; // standard, negative, left
 constexpr uint8_t kFontCompressedInverted= 0x04; // compressed, negative, left

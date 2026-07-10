@@ -175,7 +175,16 @@ private:
   // Returns false if the write was dropped so service() can restart the page.
   bool drawOp(const FrameOp& op) {
     if (op.t == 't') {
-      return fis_.sendStringFS(op.x, op.y, op.f, String(op.s.c_str())) != 0;
+      // Highlighted row: XOR a filled bar across the row so it lights up, then XOR
+      // the text over it (glyph pixels toggle back to dark) -> dark-on-lit inverse.
+      // Both writes are XOR, so re-running drawOp on the same op erases it exactly,
+      // which is what the scroll erase-then-draw relies on. Strip the flag first.
+      if (op.f & kFontHighlight) {
+        uint8_t bar[64]; memset(bar, 0xFF, sizeof(bar));        // 64x8 solid block
+        uint8_t y = op.y >= 1 ? op.y - 1 : 0;
+        fis_.GraphicFromArray(0, y, 64, 8, bar, 1);            // 1 = XOR mode
+      }
+      return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
     uint8_t buf[1024];
     int bytes = (op.w * op.h + 7) / 8;

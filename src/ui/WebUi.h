@@ -130,9 +130,9 @@ function topLine(s,y){s=(s||'');   // >=8 chars: left-aligned (matches FIS); els
 function draw(f){cx.fillStyle=BG;cx.fillRect(0,0,cv.width,cv.height);
   if(f.mode=='top'){topLine(f.top[0],1);topLine(f.top[1],10);return;}
   for(const o of f.ops){
-    if(o.t=='text'){const cen=(o.f&0x20),neg=!(o.f&0x01),cw=(o.f&0x04)?5:6;
+    if(o.t=='text'){const hl=(o.f&0x40),cen=(o.f&0x20),cw=(o.f&0x04)?5:6;
       const w=textW(o.s,cw),x=cen?Math.max(0,(W-w)/2):o.x;
-      if(neg){cx.fillStyle=ON;cx.fillRect(x*S-2,o.y*S-2,w*S+4,7*S+4);text(o.s,x,o.y,BG,cw);}
+      if(hl){cx.fillStyle=ON;cx.fillRect(0,(o.y-1)*S,W*S,8*S);text(o.s,x,o.y,BG,cw);}
       else text(o.s,x,o.y,ON,cw);}
     else if(o.t=='bmp'){cx.fillStyle=ON;for(let yy=0;yy<o.h;yy++)for(let xx=0;xx<o.w;xx++){
       let bit=yy*o.w+xx,by=parseInt(o.d.substr((bit>>3)*2,2),16);

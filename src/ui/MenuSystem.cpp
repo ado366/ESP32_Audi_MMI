@@ -73,11 +73,11 @@ void MenuSystem::render(IDisplay& d) const {
   for (int row = 0; row < visible && start + row < count; ++row) {
     int i = start + row;
     char line[24];
-    std::snprintf(line, sizeof(line), "%c%s", i == sel ? '>' : ' ', lvl.children[i].label);
-    // Compressed font so long labels (+ the '>' marker) fit the 64px width.
-    // The cluster won't render an inverse highlight, so the '>' marks selection.
+    std::snprintf(line, sizeof(line), " %s", lvl.children[i].label);
+    // Selected row gets an inverse highlight bar (kFontHighlight); the display
+    // layer draws a filled bar + dark text. Compressed font fits the 64px width.
     d.drawText(0, static_cast<uint8_t>(16 + row * 8),
-               kFontCompressedLeft, line);
+               i == sel ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, line);
   }
 }
 

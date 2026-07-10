@@ -393,10 +393,10 @@ void App::renderDiag() {
     if (start > total - visible) start = total - visible < 0 ? 0 : total - visible;
     for (int r = 0; r < visible && start + r < total; ++r) {
       int i = start + r;
-      if (i < n) std::snprintf(l, sizeof(l), "%c%05u%s", i == listIndex_ ? '>' : ' ', faults_[i].code, faults_[i].sporadic ? " *" : "");
-      else       std::snprintf(l, sizeof(l), "%cCLEAR ALL", i == listIndex_ ? '>' : ' ');
+      if (i < n) std::snprintf(l, sizeof(l), " %05u%s", faults_[i].code, faults_[i].sporadic ? " *" : "");
+      else       std::snprintf(l, sizeof(l), " CLEAR ALL");
       display_.drawText(0, static_cast<uint8_t>(14 + r * 9),
-                        kFontCompressedLeft, l);
+                        i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, l);
     }
     // Description of the highlighted fault scrolls along the bottom line.
     if (listIndex_ < n) {
@@ -579,12 +579,13 @@ void App::renderScreen() {
       const char* nm = !d.name.empty() ? d.name.c_str()
                      : d.mac.size() >= 6 ? d.mac.c_str() + d.mac.size() - 6 : d.mac.c_str();
       bool active = d.connected || d.mac == bt_.status().activeDeviceMac;
-      std::snprintf(line, sizeof(line), "%c%s", active ? '*' : (i == listIndex_ ? '>' : ' '), nm);
+      std::snprintf(line, sizeof(line), "%c%s", active ? '*' : ' ', nm);   // * = connected
     } else {
-      std::snprintf(line, sizeof(line), "%c%s", i == listIndex_ ? '>' : ' ', phonebook_.entries()[i].name.c_str());
+      std::snprintf(line, sizeof(line), " %s", phonebook_.entries()[i].name.c_str());
     }
+    // Selected row gets the inverse highlight bar instead of a '>' marker.
     display_.drawText(0, static_cast<uint8_t>(16 + row * 8),
-                      kFontCompressedLeft, line);
+                      i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, line);
   }
 }
 
