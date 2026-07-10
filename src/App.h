@@ -13,6 +13,7 @@
 #include "diag/Diagnostics.h"
 #include "diag/Presets.h"
 #include "hal/ISystem.h"
+#include "hal/IRadio.h"
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ public:
   Phonebook&        phonebook() { return phonebook_; }
   PresetStore&      presets()   { return presets_; }
   void setSystem(ISystem* sys)  { sys_ = sys; }   // optional platform hook
+  void setRadio(IRadio* radio)  { radio_ = radio; } // head-unit sniffer (passthrough)
 
 private:
   // A leaf screen opened from the menu.
@@ -69,6 +71,7 @@ private:
   Phonebook        phonebook_;
   PresetStore      presets_;
   ISystem*         sys_ = nullptr;
+  IRadio*          radio_ = nullptr;
 
   Context  ctx_ = Context::NowPlaying;
   bool     menuOpen_ = false;

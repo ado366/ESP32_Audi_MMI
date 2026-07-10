@@ -56,6 +56,7 @@ bool App::isDiagScreen() const {
 void App::tick(uint32_t nowMs) {
   now_ = nowMs;
   bt_.poll();
+  if (radio_) { radio_->poll(); if (radio_->consumeChanged()) dirty_ = true; }
 
   // Calibration takes over the screen; only the encoder long-press cancels it.
   if (inputs_.calibrating()) {
@@ -621,6 +622,15 @@ void App::render() {
   }
   if (screen_ != Screen::None) { renderScreen(); return; }
   if (menuOpen_) { menu_.render(display_); return; }
+
+  // Radio passthrough: unless the head unit is in "CD" mode (our aux source is
+  // selected), forward its own top-line text straight to the cluster. Menu,
+  // diagnostics and calls above always override this.
+  if (radio_ && !radio_->cdMode()) {
+    scrolling_ = false;
+    display_.showTopLines(radio_->line1(), radio_->line2());
+    return;
+  }
 
   if (st.playing && !st.title.empty()) {
     scrolling_ = st.title.size() > kWin || st.artist.size() > kWin;

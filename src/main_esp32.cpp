@@ -8,6 +8,7 @@
 #include "hal/esp32/Esp32Diag.h"
 #include "hal/esp32/OtaManager.h"
 #include "hal/esp32/Esp32System.h"
+#include "hal/esp32/Esp32Radio.h"
 #ifdef MMI_PROVISION
 #include "Secrets.h"   // real WiFi creds — only in the USB provisioning build
 #endif
@@ -39,6 +40,7 @@ static Esp32Inputs    inputs;
 static Esp32Bluetooth bt;
 static Esp32Diag      diag;
 static OtaManager     ota;
+static Esp32Radio     radio;
 static App*           app = nullptr;
 
 void setup() {
@@ -72,11 +74,13 @@ void setup() {
     char b[320];
     snprintf(b, sizeof(b),
       "{\"up_s\":%lu,\"heap\":%u,\"link\":%s,\"dev\":\"%s\",\"play\":%s,\"call\":%d,"
-      "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d}",
+      "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"cd\":%s,\"rl1\":\"%s\",\"rl2\":\"%s\","
+      "\"raw\":[%d,%d,%d],\"ctx\":%d}",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
       s.linked ? "true" : "false", s.activeDeviceName.c_str(), s.playing ? "true" : "false",
       (int)s.call, s.scoOpen ? "true" : "false", s.title.c_str(),
       diag.isConnected() ? "true" : "false", (unsigned long)display.writeFails(),
+      radio.cdMode() ? "true" : "false", radio.line1(), radio.line2(),
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
       app ? (int)app->context() : -1);
     return std::string(b);
@@ -97,6 +101,8 @@ void setup() {
   static App theApp(display, inputs, bt, storage, diag);
   app = &theApp;
   app->setSystem(&sys);
+  radio.begin();               // start sniffing the head unit's FIS output
+  app->setRadio(&radio);       // forward radio text when not in CD mode
   app->begin();
   if (needCal) inputs.startCalibration();  // App shows the calibrate screen while active
   display.flush();                          // push the first frame to the FIS
