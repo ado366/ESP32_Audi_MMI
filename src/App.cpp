@@ -6,6 +6,7 @@
 #include "ui/GraphRenderer.h"
 #include "diag/DtcDescriptions.h"
 #include "diag/DtcElaboration.h"
+#include "diag/SpeedoRenderer.h"
 #include <cstdio>
 
 namespace mmi {
@@ -75,7 +76,8 @@ void App::switchPhone(int dir) {
 
 bool App::isDiagScreen() const {
   return screen_ == Screen::DiagFavourites || screen_ == Screen::DiagReadGroup ||
-         screen_ == Screen::DiagGraph || screen_ == Screen::DiagFaults;
+         screen_ == Screen::DiagGraph || screen_ == Screen::DiagFaults ||
+         screen_ == Screen::Speedo;
 }
 
 void App::tick(uint32_t nowMs) {
@@ -162,6 +164,9 @@ void App::handle(Action a) {
       menuOpen_ = false; screen_ = Screen::None;
       dirty_ = true;
       break;
+    case Action::JumpSpeedo:
+      menuOpen_ = false; openScreen(Screen::Speedo);   // Info button quick-recall
+      break;
     case Action::ScrollDown: if (menuOpen_) { menu_.scrollDown(); dirty_ = true; } else if (canSwitchPhone()) switchPhone(+1); break;
     case Action::ScrollUp:   if (menuOpen_) { menu_.scrollUp();   dirty_ = true; } else if (canSwitchPhone()) switchPhone(-1); break;
     case Action::Select:     if (menuOpen_) { menu_.select();     dirty_ = true; } break;
@@ -210,6 +215,10 @@ bool App::handleScreen(Action a) {
   if (screen_ == Screen::Info) {
     if (a == Action::Back || a == Action::Select) { screen_ = Screen::None; dirty_ = true; }
     return true; // consume nav
+  }
+  if (screen_ == Screen::Speedo) {
+    if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
+    return true; // consume nav (encoder does nothing on the speedo)
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
@@ -362,6 +371,7 @@ void App::onMenuSelect(MenuId id) {
       openScreen(Screen::SelectEcu);
       for (int i = 0; i < ecu::kModuleCount; ++i) if (ecu::kModules[i].addr == readEcu_) listIndex_ = i;
       break;
+    case MenuId::DiagSpeedo:     openScreen(Screen::Speedo);         break;
     case MenuId::DiagFavourites: openScreen(Screen::DiagFavourites); break;
     case MenuId::DiagReadGroup:  readGroup_ = 2; openScreen(Screen::DiagReadGroup); break;
     case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
@@ -402,6 +412,8 @@ void App::sampleDiag() {
   if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
     const Preset& p = presets_.at(diagPresetIdx_);
     e = p.ecu; g = p.group; vi = p.valueIndex;
+  } else if (screen_ == Screen::Speedo) {
+    e = ecu::Dashboard; g = 1; vi = 0;              // speed = cluster group 1, value 1
   }
   if (!diag_.readGroup(e, g, group_)) return;
   if (vi < group_.count) {
@@ -412,6 +424,16 @@ void App::sampleDiag() {
 
 void App::renderDiag() {
   char l[24];
+
+  if (screen_ == Screen::Speedo) {
+    display_.beginFullScreen(true);
+    int spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
+    auto bmp = SpeedoRenderer::render(spd, 64, 44);
+    display_.drawBitmap(0, 8, 64, 44, bmp.data());   // big 7-seg digits
+    display_.drawText(0, 62, kFontCentered, "KM/H");
+    display_.drawText(0, 74, kFontCompressedCenter, diag_.isConnected() ? " " : "CONNECTING");
+    return;
+  }
 
   if (screen_ == Screen::DiagFaults) {
     display_.beginFullScreen(true);
@@ -531,8 +553,11 @@ void App::renderDiag() {
   for (int i = 0; i < group_.count && i < 4; ++i) {
     int y = kDiagTop + i * kLineH * 2;
     if (y + kLineH + 7 > 88) break;
-    display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, group_.values[i].label.c_str()); // description
-    display_.drawText(0, static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, fmt(group_.values[i]).c_str());   // value
+    std::string val = fmt(group_.values[i]);
+    int vx = 64 - static_cast<int>(val.size()) * 5;  // right-align the value (~5px/compressed char)
+    if (vx < 0) vx = 0;
+    display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, group_.values[i].label.c_str()); // label (left)
+    display_.drawText(static_cast<uint8_t>(vx), static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, val.c_str()); // value (right)
   }
 }
 

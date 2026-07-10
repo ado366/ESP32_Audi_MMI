@@ -11,6 +11,7 @@ Action InputRouter::resolve(Control c, Context ctx) {
     case Control::SteerLeftPlus:  return Action::VolumeUp;   // Left = volume, always
     case Control::SteerLeftMinus: return Action::VolumeDown;
     case Control::Menu:           return Action::MenuOpenClose;
+    case Control::Info:           return Action::JumpSpeedo;  // quick-recall the speedometer
     default: break;
   }
 

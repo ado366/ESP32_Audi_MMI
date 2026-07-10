@@ -25,6 +25,7 @@ static const MenuItem kBluetooth[] = {
 
 static const MenuItem kDiagnostics[] = {
   LEAF("SELECT ECU", DiagSelectEcu),
+  LEAF("SPEEDO",     DiagSpeedo),
   LEAF("FAVOURITES", DiagFavourites),
   LEAF("READ GROUP", DiagReadGroup),
   LEAF("READ FAULTS",DiagReadFaults),

@@ -40,7 +40,7 @@ private:
   enum class Screen : uint8_t {
     None, SwitchDevice, Phonebook, MicTest, ButtonMonitor, Bc127Debug,
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
-    DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults,
+    DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults, Speedo,
     SelectEcu, // pick the KWP module to talk to
     Info   // generic title + text lines (version, confirmations, placeholders)
   };

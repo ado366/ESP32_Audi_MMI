@@ -42,7 +42,7 @@ enum class Action : uint8_t {
   // Call control
   CallAnswer, CallReject, CallEnd,
   // Shortcuts
-  JumpDiagnostics, JumpNowPlaying, CycleInfo,
+  JumpDiagnostics, JumpNowPlaying, CycleInfo, JumpSpeedo,
   // Assignable (chords) — resolved via Settings at a higher layer
   Assignable,
 };

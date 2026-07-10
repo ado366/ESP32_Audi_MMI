@@ -137,15 +137,13 @@ public:
 private:
   struct Cmd { enum Kind { Init, ExitGfx, TopLine, Draw } kind; FrameOp op; std::string buf; };
 
-  // Same layout as the drawn frame and every changed op is a text row — so each
-  // changed row can be updated in place by XOR-erasing the old and drawing the new.
+  // Same layout as the drawn frame (same op count + slots). Changed ops update in
+  // place: text via replace-bg + XOR, bitmaps via replace-mode overwrite — both
+  // self-correcting, so no full-screen clear/flash on scroll or live value change.
   bool sameStructureText(const std::vector<FrameOp>& ops) const {
     if (!fullValid_ || ops.size() != drawn_.size()) return false;
-    for (size_t i = 0; i < ops.size(); ++i) {
+    for (size_t i = 0; i < ops.size(); ++i)
       if (!ops[i].sameSlot(drawn_[i])) return false;                    // layout moved
-      if (ops[i].f == drawn_[i].f && ops[i].s == drawn_[i].s) continue; // unchanged
-      if (ops[i].t != 't') return false;                               // bitmap change -> full redraw
-    }
     return true;
   }
 
@@ -186,7 +184,7 @@ private:
     if (bytes > (int)sizeof(buf)) bytes = sizeof(buf);
     for (int i = 0; i < bytes; ++i)
       buf[i] = (uint8_t)((hexv(op.s[i * 2]) << 4) | hexv(op.s[i * 2 + 1]));
-    fis_.GraphicFromArray(op.x, op.y, op.w, op.h, buf, 1);  // bitmaps: no status, no retry
+    fis_.GraphicFromArray(op.x, op.y, op.w, op.h, buf, 2);  // 2 = replace mode (self-correcting, no flash)
     return true;
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
