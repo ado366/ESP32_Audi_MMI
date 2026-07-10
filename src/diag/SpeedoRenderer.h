@@ -44,9 +44,26 @@ struct SpeedoRenderer {
     char s[8]; snprintf(s, sizeof(s), "%d", value < 0 ? 0 : (value > 999 ? 999 : value));
     int n = (int)strlen(s);
     const int dw = 10, gap = 3, t = 2;                // ~half size (10 x h); FIS bitmaps are slow
-    int actualW = n * dw + (n - 1) * gap;             // width of just the digits shown
-    int x0 = (w - actualW) / 2; if (x0 < 0) x0 = 0;   // center them
+    int actualW = n * dw + (n - 1) * gap;             // width of just the digit cells
+    int x0 = (w - actualW) / 2; if (x0 < 0) x0 = 0;
     for (int i = 0; i < n; ++i) digit(b, w, h, s[i], x0 + i * (dw + gap), 0, dw, h, t);
+    // Re-center on the actual lit pixels. Glyphs like '1' only light one side of
+    // their cell, so cell-based centering skews numbers like 150 to the right.
+    int lo = w, hi = -1;
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+      int bit = y * w + x; if (b[bit >> 3] & (uint8_t)(0x80 >> (bit & 7))) { if (x < lo) lo = x; if (x > hi) hi = x; }
+    }
+    if (hi >= lo) {
+      int shift = (w - (hi - lo + 1)) / 2 - lo;       // move ink to true center
+      if (shift != 0) {
+        std::vector<uint8_t> nb(b.size(), 0);
+        for (int y = 0; y < h; ++y) for (int x = lo; x <= hi; ++x) {
+          int bit = y * w + x;
+          if (b[bit >> 3] & (uint8_t)(0x80 >> (bit & 7))) { int nx = x + shift; if (nx >= 0 && nx < w) px(nb, w, h, nx, y); }
+        }
+        b.swap(nb);
+      }
+    }
     return b;
   }
 };
