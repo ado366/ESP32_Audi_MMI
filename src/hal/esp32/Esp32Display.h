@@ -19,6 +19,7 @@
 #include "../IDisplay.h"
 #include "../../Config.h"
 #include "../../ui/FrameRecorder.h"
+#include "../../ui/FisCharset.h"
 #include <VAGFISWriter.h>
 #include <Arduino.h>
 #include <cstring>
@@ -34,17 +35,9 @@ public:
 
   void begin() { fis_.begin(); fis_.reset(); }
 
-  // The FIS ROM is UPPERCASE-only; map to the safe set (drop non-ASCII/control).
-  static std::string fisSafe(const char* s) {
-    std::string o;
-    for (const char* p = s; p && *p; ++p) {
-      unsigned char c = static_cast<unsigned char>(*p);
-      if (c >= 0x80 || c < 0x20) { o.push_back(' '); continue; }
-      if (c >= 'a' && c <= 'z') c -= 32;
-      o.push_back(static_cast<char>(c));
-    }
-    return o;
-  }
+  // Map UTF-8 to the FIS character ROM (upper-cased; accents -> ROM glyphs,
+  // Czech/Polish carons at 0x80-0x9F). See FisCharset.h.
+  static std::string fisSafe(const char* s) { return toFisText(s ? s : ""); }
 
   // ---- IDisplay: record only ----
   void showTopLines(const char* l1, const char* l2) override { rec_.topLines(fisSafe(l1).c_str(), fisSafe(l2).c_str()); }

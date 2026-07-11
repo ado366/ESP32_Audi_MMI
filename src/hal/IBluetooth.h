@@ -62,6 +62,7 @@ public:
   virtual void pullPhonebook() {}
   virtual std::vector<Contact> contacts() const { return {}; }
   virtual size_t contactCount() const { return 0; }   // cheap size (avoids copying contacts())
+  virtual std::string contactsSource() const { return ""; }  // name of the phone the book is from
 
   // Paired/known devices (from the BC127 LIST); refreshDevices() re-queries the
   // module (STATUS + LIST). Used by the Switch-Device screen.

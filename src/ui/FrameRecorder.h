@@ -59,7 +59,14 @@ public:
 
 private:
   static std::string esc(const std::string& in) {
-    std::string o; for (char c : in) { if (c == '"' || c == '\\') o.push_back('\\'); o.push_back(c); } return o;
+    static const char* kHex = "0123456789abcdef";
+    std::string o;
+    for (unsigned char c : in) {
+      if (c == '"' || c == '\\') { o.push_back('\\'); o.push_back((char)c); }
+      else if (c < 0x20 || c >= 0x80) { o += "\\u00"; o.push_back(kHex[c >> 4]); o.push_back(kHex[c & 0xF]); }  // FIS accent/control bytes
+      else o.push_back((char)c);
+    }
+    return o;
   }
   std::string mode_ = "top", top1_, top2_;
   std::vector<FrameOp> ops_;

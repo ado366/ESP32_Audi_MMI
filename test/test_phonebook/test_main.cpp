@@ -1,6 +1,7 @@
 // Unit tests for the PBAP Phonebook (plan §3c / §8).
 #include <unity.h>
 #include "../../src/bt/Phonebook.h"
+#include "../../src/ui/FisCharset.h"
 
 using namespace mmi;
 
@@ -58,6 +59,15 @@ void test_max_entries_cap() {
   TEST_ASSERT_EQUAL_UINT(3, n);
 }
 
+void test_fis_charset_mapping() {
+  // Names are stored as UTF-8; the display maps them to the FIS ROM charset:
+  // upper-cased, Latin-1 accents kept (á->Á 0xC1), Czech carons -> 0x80-0x9F.
+  TEST_ASSERT_EQUAL_STRING("DOLE\x92""AL", toFisText("Doležal").c_str());      // ž -> Ž 0x92
+  TEST_ASSERT_EQUAL_STRING("TOMKOV\xC1", toFisText("Tomková").c_str());        // á -> Á 0xC1
+  TEST_ASSERT_EQUAL_STRING("P\x8C\x82""OLKA V\xC1""CLAV", toFisText("Pščolka Václav").c_str());  // š=0x8C, č=0x82, á=0xC1
+  TEST_ASSERT_EQUAL_STRING("HELLO", toFisText("hello").c_str());               // ASCII upper-cased
+}
+
 void test_normalize() {
   TEST_ASSERT_EQUAL_STRING("91234567", Phonebook::normalize("+41 79 123 45 67").c_str());
   TEST_ASSERT_EQUAL_STRING("", Phonebook::normalize("no-digits").c_str());
@@ -69,6 +79,7 @@ int main(int, char**) {
   RUN_TEST(test_incremental_feed);
   RUN_TEST(test_lookup_tolerant_matching);
   RUN_TEST(test_max_entries_cap);
+  RUN_TEST(test_fis_charset_mapping);
   RUN_TEST(test_normalize);
   return UNITY_END();
 }

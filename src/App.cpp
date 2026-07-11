@@ -775,9 +775,15 @@ void App::renderScreen() {
     if (upd && sys_) display_.drawText(0, 70, kFontCompressedLeft, "SEL=PULL UPDATE");
     return;
   }
-  const char* title = screen_ == Screen::SwitchDevice ? "SWITCH DEV"
-                    : screen_ == Screen::SelectEcu ? "SELECT ECU" : "PHONEBOOK";
-  display_.drawText(0, 0, kFontCentered, title);
+  // Phonebook header shows WHICH phone the contacts belong to (the active device).
+  std::string hdr = screen_ == Screen::SwitchDevice ? "SWITCH DEV"
+                  : screen_ == Screen::SelectEcu ? "SELECT ECU" : "PHONEBOOK";
+  if (screen_ == Screen::Phonebook) {
+    std::string src = bt_.contactsSource();
+    if (src.empty()) src = bt_.status().activeDeviceName;
+    if (!src.empty()) hdr = src.substr(0, 10);   // e.g. "ONEPLUS 9"
+  }
+  display_.drawText(0, 0, kFontCentered, hdr.c_str());
   auto devs = bt_.pairedDevices();
   int n = screen_ == Screen::SwitchDevice ? static_cast<int>(devs.size()) : screenItemCount();
   if (screen_ == Screen::SwitchDevice && n == 0) { display_.drawText(0, 24, kFontCompressedLeft, "SCANNING..."); return; }

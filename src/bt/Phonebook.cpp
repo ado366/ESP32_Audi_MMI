@@ -1,6 +1,7 @@
 // Phonebook.cpp — PBAP parsing + number normalization + lookup.
 #include "Phonebook.h"
 #include <cctype>
+#include <cstdint>
 
 namespace mmi {
 
@@ -13,6 +14,8 @@ std::string Phonebook::normalize(const std::string& number) {
 
 bool Phonebook::add(const std::string& name, const std::string& number, size_t maxEntries) {
   if (entries_.size() >= maxEntries) return false;
+  // Store the name as-is (UTF-8); the display layer maps it to the FIS charset
+  // (accents render on the cluster; see FisCharset.h).
   entries_.push_back({name, number});
   return true;
 }
@@ -39,8 +42,25 @@ static std::string nameFromN(const std::string& v) {
   return out.empty() ? trim(v) : out;
 }
 
+// Strip a "PB_PULL <link> <size> " notification header from the front of a line
+// (the module prefixes it to the first line of each chunk).
+static std::string stripPullHeader(const std::string& s) {
+  if (s.rfind("PB_PULL", 0) != 0) return s;
+  size_t p = 7; int skip = 2;                       // skip <link> and <size>
+  while (skip-- > 0) {
+    while (p < s.size() && s[p] == ' ') ++p;
+    while (p < s.size() && s[p] != ' ') ++p;
+  }
+  while (p < s.size() && s[p] == ' ') ++p;
+  return s.substr(p);
+}
+
 void Phonebook::feedLine(const std::string& raw, size_t maxEntries) {
-  std::string line = trim(raw);
+  std::string line = stripPullHeader(trim(raw));
+  // A chunk boundary can merge the next header into a value; cut it off so it
+  // doesn't leak into a name/number (e.g. "...NamePB_PULL 16 483 ...").
+  size_t merge = line.find("PB_PULL");
+  if (merge != std::string::npos) line = trim(line.substr(0, merge));
   if (line.empty()) return;
   // A vCard may share a serial line with the PB_PULL header ("PB_PULL 16 184
   // BEGIN:VCARD"), so match on the marker anywhere in the line.

@@ -73,6 +73,7 @@ public:
   const std::vector<Contact>& phonebook() const { return phonebook_; }
   std::vector<Contact> contacts() const override { return phonebook_; }
   size_t contactCount() const override { return phonebook_.size(); }
+  std::string contactsSource() const override { return status_.activeDeviceName; }
   void pullPhonebook() override { changed(); }   // already populated; just nudge a refresh
   uint8_t micGain() const { return micGain_; }
 
