@@ -662,8 +662,10 @@ void App::renderDiag() {
   }
 
   if (view == View::Boost) {
-    // FIS-Control "Ladedruck" layout: value + BAR on top, a turbocharger symbol
-    // on the left with a rising histogram gauge to its right, min/max below.
+    // FIS-Control "Ladedruck" gauge (turbocharger symbol + rising histogram),
+    // shifted into the lower two-thirds so the now-playing title/artist stays
+    // visible in the top third.
+    const BtStatus& bst = bt_.status();
     float mn = 0, mx = 2.5f;
     if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
       const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max;
@@ -671,17 +673,22 @@ void App::renderDiag() {
     Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
     float frac = (mx > mn) ? (m.value - mn) / (mx - mn) : 0.f;
     display_.beginFullScreen(true);
-    display_.drawText(0, 0, kFontCentered, fmt(m).c_str());   // boost value
-    display_.drawText(0, 12, kFontCentered, "BAR");
+    // top third: what's currently playing (scrolls if long)
+    if (!bst.title.empty())  display_.drawText(0, 0,  kFontCompressedCenter, marquee(bst.title, 10).c_str());
+    if (!bst.artist.empty()) display_.drawText(0, 10, kFontCompressedCenter, marquee(bst.artist, 10).c_str());
+    // boost value (below the top third)
+    display_.drawText(0, 24, kFontCentered, fmt(m).c_str());
     if (screen_ == Screen::DiagBoost) {                       // standalone: show/adjust which block
       std::snprintf(l, sizeof(l), "GRP %u", static_cast<unsigned>(readGroup_));
-      display_.drawText(0, 22, kFontCompressedCenter, l);
+      display_.drawText(0, 35, kFontCompressedCenter, l);
     }
-    display_.drawBitmap(1, 30, kTurboW, kTurboH, turboIcon());        // turbo symbol (left)
-    auto bars = GraphRenderer::renderBars(frac, 28, 26);
-    display_.drawBitmap(34, 30, 28, 26, bars.data());                 // rising gauge (right)
-    std::snprintf(l, sizeof(l), "%.1f", mn); display_.drawText(0, 60, kFontCompressedLeft, l);
-    std::snprintf(l, sizeof(l), "%.1f BAR", mx); display_.drawText(34, 60, kFontCompressedLeft, l);
+    // gauge: turbo symbol (left, 40px) + rising bars (right, 24px) — both widths
+    // are multiples of 8 so each bitmap row is byte-aligned for the FIS.
+    display_.drawBitmap(0, 44, kTurboW, kTurboH, turboIcon());
+    auto bars = GraphRenderer::renderBars(frac, 24, kTurboH, 6);   // 6 bars -> 3px each, so fill vs hollow reads
+    display_.drawBitmap(40, 44, 24, kTurboH, bars.data());
+    std::snprintf(l, sizeof(l), "%.1f", mn);     display_.drawText(0, 76, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "%.1f BAR", mx); display_.drawText(34, 76, kFontCompressedLeft, l);
     return;
   }
 
