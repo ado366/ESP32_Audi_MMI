@@ -23,6 +23,15 @@ inline Control webControlFromName(const std::string& n) {
   if (n == "SteerLeftMinus") return Control::SteerLeftMinus;
   if (n == "SteerRightPlus") return Control::SteerRightPlus;
   if (n == "SteerRightMinus") return Control::SteerRightMinus;
+  // Steering + console chords (so the browser control page can exercise them)
+  if (n == "SteerLPlusRPlus") return Control::SteerLPlusRPlus;
+  if (n == "SteerLPlusRMinus") return Control::SteerLPlusRMinus;
+  if (n == "SteerLMinusRPlus") return Control::SteerLMinusRPlus;
+  if (n == "SteerLMinusRMinus") return Control::SteerLMinusRMinus;
+  if (n == "MenuReturn") return Control::MenuReturn;
+  if (n == "MenuNav") return Control::MenuNav;
+  if (n == "TrafficReverse") return Control::TrafficReverse;
+  if (n == "InfoReverse") return Control::InfoReverse;
   return Control::None;
 }
 
