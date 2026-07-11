@@ -97,7 +97,16 @@ public:
   void callAnswer() override { sendCommand("CALL " + link(HFP) + " ANSWER"); }
   void callReject() override { sendCommand("CALL " + link(HFP) + " REJECT"); }
   void callEnd()    override { sendCommand("CALL " + link(HFP) + " END"); }
-  void dial(const std::string& number) override { sendCommand("CALL " + link(HFP) + " " + number); }
+  void dial(const std::string& number) override {
+    // Melody: outgoing call is "CALL <link> OUTGOING <number>" (the OUTGOING
+    // action keyword is required; without it the module reads the number as the
+    // action and rejects the command). Strip vCard formatting (spaces, dashes,
+    // parens) to '+' and digits so a space can't split the command into tokens.
+    std::string n;
+    for (char c : number) if (c == '+' || (c >= '0' && c <= '9')) n.push_back(c);
+    if (n.empty()) return;
+    sendCommand("CALL " + link(HFP) + " OUTGOING " + n);
+  }
 
   void connectDevice(const std::string& mac) override {
     if (singleDevice_) disconnectActive();     // enforce a single active link
