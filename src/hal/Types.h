@@ -37,6 +37,7 @@ enum class Action : uint8_t {
   VolumeUp, VolumeDown,
   TrackNext, TrackPrev,
   PlayPause,
+  RadioSource,           // change the OEM radio's band/source (mode)
   // Menu navigation
   MenuOpenClose, ScrollUp, ScrollDown, Select, Back, RootBack,
   // Call control

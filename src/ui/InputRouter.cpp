@@ -54,24 +54,27 @@ Action InputRouter::resolve(Control c, Context ctx) {
     return Action::None;
   }
 
-  // --- Idle / NowPlaying / Diagnostics: media + shortcuts ---
+  // --- Idle / NowPlaying: media + radio + shortcuts ---
   switch (c) {
+    // Right steering + encoder rotate change the song (BT track) / tuner station
+    // (radio) — App routes to the right target based on the head-unit source.
     case Control::SteerRightPlus:  return Action::TrackNext;
     case Control::SteerRightMinus: return Action::TrackPrev;
+    case Control::EncoderCW:       return Action::TrackNext;  // rotate = next song on Now-Playing
+    case Control::EncoderCCW:      return Action::TrackPrev;  // rotate = previous song
     case Control::EncoderClick:    return Action::PlayPause;
     // Long-press opens the menu. This is the encoder-ONLY entry path, so the
     // menu (and Debug -> Calibrate) is reachable even when the analog buttons
     // are miscalibrated / not yet working.
     case Control::EncoderHold:     return Action::MenuOpenClose;
-    case Control::EncoderCW:       return Action::ScrollDown; // cycle presets/views
-    case Control::EncoderCCW:      return Action::ScrollUp;
     case Control::Traffic:         return Action::JumpDiagnostics; // car icon shortcut
     case Control::Nav:             return Action::JumpNowPlaying;
     case Control::Info:            return Action::CycleInfo;
-    // Chords are resolved against Settings at a higher layer.
+    // L-R+ chord cycles the OEM radio's band/source (v1 behaviour).
+    case Control::SteerLMinusRPlus: return Action::RadioSource;
+    // Other chords are resolved against Settings at a higher layer.
     case Control::SteerLPlusRPlus:
     case Control::SteerLPlusRMinus:
-    case Control::SteerLMinusRPlus:
     case Control::SteerLMinusRMinus:
     case Control::MenuReturn:
     case Control::MenuNav:

@@ -6,6 +6,7 @@
 #include "../IRadio.h"
 #include "../../Config.h"
 #include <VAGFISReader.h>
+#include <VAGRadioRemote.h>
 #include <Arduino.h>
 #include <cstring>
 
@@ -13,9 +14,19 @@ namespace mmi {
 
 class Esp32Radio : public IRadio {
 public:
-  Esp32Radio() : reader_(cfg::PIN_RADIO_CLK, cfg::PIN_RADIO_DATA, cfg::PIN_RADIO_ENA) {}
+  Esp32Radio()
+    : reader_(cfg::PIN_RADIO_CLK, cfg::PIN_RADIO_DATA, cfg::PIN_RADIO_ENA),
+      remote_(cfg::PIN_REMOTE, -1) {}   // output-only (no incoming decode)
 
-  void begin() { reader_.begin(); lastAck_ = millis(); }
+  void begin() { reader_.begin(); remote_.begin(); lastAck_ = millis(); }
+
+  // ---- control output to the head unit (as in v1) ----
+  void volumeUp()   override { remote_.volumeUp(); }
+  void volumeDown() override { remote_.volumeDown(); }
+  void tuneUp()     override { remote_.up(); }
+  void tuneDown()   override { remote_.down(); }
+  void sourceMode() override { remote_.mode(); }
+  bool hasRemote()  const override { return true; }
 
   void poll() override {
     if (reader_.hasNewMsg()) {
@@ -57,6 +68,7 @@ private:
   }
 
   VAGFISReader reader_;
+  VAGRadioRemote remote_;
   char line1_[9] = {0}, line2_[9] = {0};
   bool cdMode_ = false, changed_ = false;
   uint32_t lastAck_ = 0;

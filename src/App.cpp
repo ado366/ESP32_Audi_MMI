@@ -78,6 +78,20 @@ void App::switchPhone(int dir) {
   dirty_ = true;
 }
 
+// A "next/prev" gesture (Right steering button or encoder rotate on Now-Playing)
+// means different things depending on the source:
+//   - paused in CD mode with 2 phones -> pick the source phone (existing bonus);
+//   - the OEM radio/tuner is the active source -> seek the tuner up/down;
+//   - otherwise (our BT/aux source) -> change the Bluetooth track.
+void App::mediaStep(int dir) {
+  if (canSwitchPhone()) { switchPhone(dir); return; }
+  if (radio_ && radio_->hasRemote() && !radio_->cdMode()) {
+    dir > 0 ? radio_->tuneUp() : radio_->tuneDown();
+  } else {
+    dir > 0 ? bt_.trackNext() : bt_.trackPrev();
+  }
+}
+
 bool App::isDiagScreen() const {
   return screen_ == Screen::DiagFavourites || screen_ == Screen::DiagReadGroup ||
          screen_ == Screen::DiagGraph || screen_ == Screen::DiagFaults ||
@@ -200,10 +214,13 @@ void App::handle(Action a) {
     case Action::RootBack:
       if (menuOpen_) { menu_.toRoot(); dirty_ = true; }
       break;
-    case Action::VolumeUp:   bt_.volumeUp();   break;
-    case Action::VolumeDown: bt_.volumeDown(); break;
-    case Action::TrackNext:  bt_.trackNext();  break;
-    case Action::TrackPrev:  bt_.trackPrev();  break;
+    // Volume always drives the head unit (it's the amplifier); fall back to the
+    // BC127's own volume only when no radio remote is wired (e.g. the emulator).
+    case Action::VolumeUp:   if (radio_ && radio_->hasRemote()) radio_->volumeUp();   else bt_.volumeUp();   break;
+    case Action::VolumeDown: if (radio_ && radio_->hasRemote()) radio_->volumeDown(); else bt_.volumeDown(); break;
+    case Action::TrackNext:  mediaStep(+1); break;
+    case Action::TrackPrev:  mediaStep(-1); break;
+    case Action::RadioSource: if (radio_ && radio_->hasRemote()) radio_->sourceMode(); break;
     case Action::PlayPause:  bt_.playPause();  break;
     case Action::CallAnswer: bt_.callAnswer(); dirty_ = true; break;
     case Action::CallReject: bt_.callReject(); dirty_ = true; break;

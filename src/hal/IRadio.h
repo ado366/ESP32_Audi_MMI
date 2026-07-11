@@ -21,6 +21,17 @@ public:
   virtual const char* line2() const { return ""; }
   // Returns true once after the text or mode changed (so the UI re-renders).
   virtual bool consumeChanged() { return false; }
+
+  // ---- Control OUTPUT to the OEM head unit (VAGRadioRemote on real hardware). ----
+  // The head unit is the amplifier and tuner, so volume always goes here and, when
+  // the radio (not our BT/aux source) is playing, so do tune up/down and source.
+  // Default no-ops so the emulator / a build with no radio wired does nothing.
+  virtual void volumeUp() {}
+  virtual void volumeDown() {}
+  virtual void tuneUp() {}     // seek/preset up on the tuner
+  virtual void tuneDown() {}
+  virtual void sourceMode() {} // cycle band/source (FM/AM/CD/AUX...)
+  virtual bool hasRemote() const { return false; } // true when control output is wired
 };
 
 } // namespace mmi

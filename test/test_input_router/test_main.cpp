@@ -47,6 +47,17 @@ void test_encoder_play_pause_when_idle() {
   TEST_ASSERT_EQUAL(Action::PlayPause, InputRouter::resolve(Control::EncoderClick, Context::NowPlaying));
 }
 
+void test_encoder_rotate_changes_song_on_now_playing() {
+  // Rotating the encoder on Now-Playing switches songs (App routes BT track vs
+  // tuner seek by source); it is NOT list-scroll here (that's the Menu context).
+  TEST_ASSERT_EQUAL(Action::TrackNext, InputRouter::resolve(Control::EncoderCW,  Context::NowPlaying));
+  TEST_ASSERT_EQUAL(Action::TrackPrev, InputRouter::resolve(Control::EncoderCCW, Context::NowPlaying));
+}
+
+void test_lminus_rplus_chord_changes_radio_source() {
+  TEST_ASSERT_EQUAL(Action::RadioSource, InputRouter::resolve(Control::SteerLMinusRPlus, Context::NowPlaying));
+}
+
 void test_encoder_longpress_opens_menu_from_idle() {
   // Encoder-only menu entry so calibration is reachable without analog buttons.
   TEST_ASSERT_EQUAL(Action::MenuOpenClose, InputRouter::resolve(Control::EncoderHold, Context::NowPlaying));
@@ -65,6 +76,8 @@ void test_chords_are_assignable() {
 
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_encoder_rotate_changes_song_on_now_playing);
+  RUN_TEST(test_lminus_rplus_chord_changes_radio_source);
   RUN_TEST(test_left_steering_is_volume_everywhere);
   RUN_TEST(test_right_steering_changes_tracks_when_idle);
   RUN_TEST(test_right_steering_controls_calls);

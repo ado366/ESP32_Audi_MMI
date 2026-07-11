@@ -63,6 +63,7 @@ private:
   Context deriveContext() const;
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
+  void mediaStep(int dir);       // next/prev: BT track, tuner seek, or phone switch by source
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
   void adaptAdjust(int dir);       // change the selected Adaptation timing field
   void adaptSave();                // persist + apply KWP timing
