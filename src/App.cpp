@@ -93,6 +93,41 @@ void App::mediaStep(int dir) {
   }
 }
 
+void App::dialParty(const std::string& name, const std::string& number) {
+  dialedName_ = name; dialedNumber_ = number;   // remembered for the outgoing call screen
+  bt_.dial(number);
+}
+
+// Best label to show for the current call: resolved contact name > caller number
+// > the number/name we dialled (outgoing calls carry no CALLER_NUMBER) > UNKNOWN.
+std::string App::callParty() const {
+  const BtStatus& st = bt_.status();
+  std::string name = st.callerName, num = st.callerNumber;
+  if (name.empty() && num.empty()) { name = dialedName_; num = dialedNumber_; }
+  if (name.empty() && !num.empty()) name = phonebook_.lookup(num);
+  if (!name.empty()) return name;
+  if (!num.empty())  return num;
+  return "UNKNOWN";
+}
+
+void App::renderCall() {
+  const BtStatus& st = bt_.status();
+  display_.beginFullScreen(true);
+  const char* label = st.call == CallState::Incoming ? "INCOMING"
+                    : st.call == CallState::Outgoing ? "CALLING"
+                    : "IN CALL";
+  std::string who = callParty();
+  display_.drawText(0, 6, kFontCentered, label);
+  display_.drawText(0, 30, kFontCentered, who.c_str());        // contact name or number
+  if (st.call == CallState::Active) {                          // running call timer M:SS
+    uint32_t s = (now_ - callStartMs_) / 1000;
+    char t[8]; std::snprintf(t, sizeof(t), "%u:%02u", static_cast<unsigned>(s / 60), static_cast<unsigned>(s % 60));
+    display_.drawText(0, 52, kFontCentered, t);
+  } else if (st.call == CallState::Incoming) {
+    display_.drawText(0, 70, kFontCompressedCenter, "CLICK=ANSWER HOLD=NO");
+  }
+}
+
 bool App::isDiagScreen() const {
   return screen_ == Screen::DiagFavourites || screen_ == Screen::DiagReadGroup ||
          screen_ == Screen::DiagGraph || screen_ == Screen::DiagBoost ||
@@ -142,6 +177,20 @@ void App::tick(uint32_t nowMs) {
       dispatch(InputRouter::resolve(ev.control, ctx_));
     }
     ctx_ = deriveContext();
+  }
+
+  // Call state transitions + live in-call timer.
+  {
+    CallState c = bt_.status().call;
+    if (c != prevCall_) {
+      if (c == CallState::Active && prevCall_ != CallState::Active) { callStartMs_ = now_; lastCallSec_ = 0; }
+      if (c == CallState::Idle) { dialedName_.clear(); dialedNumber_.clear(); }
+      prevCall_ = c; dirty_ = true;
+    }
+    if (c == CallState::Active) {                 // repaint the M:SS timer once per second
+      uint32_t s = (now_ - callStartMs_) / 1000;
+      if (s != lastCallSec_) { lastCallSec_ = s; dirty_ = true; }
+    }
   }
 
   // Live diagnostics polling. Groups refresh fast; faults are read (async on
@@ -363,11 +412,11 @@ void App::screenSelect() {
     screen_ = Screen::None;
   } else if (screen_ == Screen::Phonebook) {
     const auto& e = phonebook_.entries();
-    if (listIndex_ < static_cast<int>(e.size())) bt_.dial(e[listIndex_].number);
+    if (listIndex_ < static_cast<int>(e.size())) dialParty(e[listIndex_].name, e[listIndex_].number);
     screen_ = Screen::None;
   } else if (screen_ == Screen::RecentCalls) {
     const auto& e = callHistory_.entries();
-    if (listIndex_ < static_cast<int>(e.size())) bt_.dial(e[listIndex_].number);   // redial
+    if (listIndex_ < static_cast<int>(e.size())) dialParty(e[listIndex_].name, e[listIndex_].number);   // redial
     screen_ = Screen::None;
   } else if (screen_ == Screen::SelectEcu) {
     if (listIndex_ >= 0 && listIndex_ < ecu::kModuleCount) readEcu_ = ecu::kModules[listIndex_].addr;
@@ -912,21 +961,7 @@ void App::render() {
 
   if (inputs_.calibrating()) { renderCalibrate(); return; }
 
-  if (ctx_ == Context::IncomingCall) {
-    std::string name = st.callerName;
-    if (name.empty() && !st.callerNumber.empty()) name = phonebook_.lookup(st.callerNumber);
-    std::string who = !name.empty() ? name
-                    : !st.callerNumber.empty() ? st.callerNumber : std::string("UNKNOWN");
-    display_.beginFullScreen(true);
-    display_.drawText(0, 12, kFontCentered, "INCOMING");
-    display_.drawText(0, 40, kFontCentered, who.c_str());
-    return;
-  }
-  if (ctx_ == Context::ActiveCall) {
-    display_.beginFullScreen(true);
-    display_.drawText(0, 24, kFontCentered, "IN CALL");
-    return;
-  }
+  if (st.call != CallState::Idle) { renderCall(); return; }   // incoming / outgoing / active
   if (screen_ != Screen::None) { renderScreen(); return; }
   if (menuOpen_) { menu_.render(display_); return; }
 

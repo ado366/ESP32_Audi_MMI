@@ -122,6 +122,15 @@ private:
   bool     dirty_ = true;
   uint32_t now_ = 0;
   bool     scrolling_ = false;
+  // Call UI state: who we dialled (for the outgoing screen), call-start time (for
+  // the in-call timer), and the last CallState seen (to detect transitions).
+  CallState   prevCall_ = CallState::Idle;
+  uint32_t    callStartMs_ = 0;
+  uint32_t    lastCallSec_ = 0;
+  std::string dialedName_, dialedNumber_;
+  void renderCall();
+  std::string callParty() const;   // best name/number to show for the current call
+  void dialParty(const std::string& name, const std::string& number);  // dial + remember who
   // Menu/list scroll rate-limit. A full FIS redraw takes ~50ms; scrolling faster
   // than it can clear+repaint makes the cluster drop writes (missing rows, or the
   // clear is lost so labels overlay). Ignore scroll steps that arrive too soon.
