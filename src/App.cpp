@@ -968,7 +968,13 @@ void App::render() {
   // Radio passthrough: unless the head unit is in "CD" mode (our aux source is
   // selected), forward its own top-line text straight to the cluster. Menu,
   // diagnostics and calls above always override this.
-  if (radio_ && !radio_->cdMode()) {
+  //
+  // The radio only sends FIS text on a CHANGE (source switch, track, RDS), not
+  // continuously. So after an ESP32 reset we don't yet know the source and hold
+  // no radio text. In that case (empty passthrough) fall through to the
+  // Bluetooth screen instead of blanking the cluster; the next radio update
+  // will lock onto the real source.
+  if (radio_ && !radio_->cdMode() && (radio_->line1()[0] || radio_->line2()[0])) {
     scrolling_ = false;
     display_.showTopLines(radio_->line1(), radio_->line2());
     return;
