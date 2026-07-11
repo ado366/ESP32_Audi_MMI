@@ -713,14 +713,17 @@ void App::renderScreen() {
     char hdr[16];
     std::snprintf(hdr, sizeof(hdr), "ROM %02X-%02X", charsetRow_, charsetRow_ + 15);
     display_.drawText(0, 0, kFontCentered, hdr);
-    for (int i = 0; i < 16; ++i) {                 // 3 per line: "XX" label + raw glyph
-      int col = i % 3, row = i / 3;
-      int x = col * 22, y = 14 + row * 11;
-      uint8_t code = static_cast<uint8_t>(charsetRow_ + i);
-      char lbl[3]; std::snprintf(lbl, sizeof(lbl), "%02X", code);
-      display_.drawText(static_cast<uint8_t>(x), static_cast<uint8_t>(y), kFontCompressedLeft, lbl);
-      char g[2] = { static_cast<char>(code), 0 };
-      display_.drawTextRaw(static_cast<uint8_t>(x + 13), static_cast<uint8_t>(y), kFontCompressedLeft, g);
+    // ONE op per line (the FIS clears the whole 64px row per text op, so multiple
+    // ops on the same y would erase each other). Pack "XX g" cells into one raw
+    // string — the hex label chars are ASCII and pass through unmapped too.
+    for (int line = 0; line < 8; ++line) {
+      std::string s;
+      for (int k = 0; k < 2; ++k) {
+        uint8_t code = static_cast<uint8_t>(charsetRow_ + line * 2 + k);
+        char lbl[4]; std::snprintf(lbl, sizeof(lbl), "%02X", code);
+        s += lbl; s += ' '; s += static_cast<char>(code); s += "  ";
+      }
+      display_.drawTextRaw(0, static_cast<uint8_t>(10 + line * 9), kFontCompressedLeft, s.c_str());
     }
     return;
   }

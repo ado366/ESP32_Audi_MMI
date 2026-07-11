@@ -60,11 +60,11 @@ void test_max_entries_cap() {
 }
 
 void test_fis_charset_mapping() {
-  // Names are stored as UTF-8; the display maps them to the FIS ROM charset:
-  // upper-cased, Latin-1 accents kept (á->Á 0xC1), Czech carons -> 0x80-0x9F.
-  TEST_ASSERT_EQUAL_STRING("DOLE\x92""AL", toFisText("Doležal").c_str());      // ž -> Ž 0x92
-  TEST_ASSERT_EQUAL_STRING("TOMKOV\xC1", toFisText("Tomková").c_str());        // á -> Á 0xC1
-  TEST_ASSERT_EQUAL_STRING("P\x8C\x82""OLKA V\xC1""CLAV", toFisText("Pščolka Václav").c_str());  // š=0x8C, č=0x82, á=0xC1
+  // Names are stored as UTF-8; the display maps them to THIS cluster's ROM codes
+  // (read off the cluster): á=0xC0, š=0xCC, č=0xCB, ž=0xCD. Upper-cased.
+  TEST_ASSERT_EQUAL_STRING("DOLE\xCD""AL", toFisText("Doležal").c_str());       // ž -> 0xCD
+  TEST_ASSERT_EQUAL_STRING("TOMKOV\xC0", toFisText("Tomková").c_str());         // á -> 0xC0
+  TEST_ASSERT_EQUAL_STRING("P\xCC\xCB""OLKA V\xC0""CLAV", toFisText("Pščolka Václav").c_str());  // š=0xCC, č=0xCB, á=0xC0
   TEST_ASSERT_EQUAL_STRING("HELLO", toFisText("hello").c_str());               // ASCII upper-cased
 }
 
