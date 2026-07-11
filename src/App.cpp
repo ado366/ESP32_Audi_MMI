@@ -89,6 +89,10 @@ void App::tick(uint32_t nowMs) {
   bt_.poll();
   if (radio_) { radio_->poll(); if (radio_->consumeChanged()) dirty_ = true; }
 
+  // Keep the phonebook (browse list + caller-ID) mirrored from the PBAP download
+  // as contacts stream in. Cheap size check; rebuild only when it changes.
+  if (bt_.contactCount() != phonebook_.size()) { syncPhonebook(); dirty_ = true; }
+
   // Calibration takes over the screen; only the encoder long-press cancels it.
   if (inputs_.calibrating()) {
     InputEvent e;
@@ -373,7 +377,7 @@ void App::onMenuSelect(MenuId id) {
   switch (id) {
     // ---- Phone / Bluetooth ----
     case MenuId::BtSwitchDevice: bt_.refreshDevices(); openScreen(Screen::SwitchDevice); break;
-    case MenuId::BtPhonebook:    openScreen(Screen::Phonebook);      break;
+    case MenuId::BtPhonebook:    openScreen(Screen::Phonebook); bt_.pullPhonebook(); break;  // trigger PBAP download
     case MenuId::BtActiveDevice:
       showInfo("ACTIVE DEV", { s.linked ? (s.activeDeviceName.empty() ? "PHONE" : s.activeDeviceName) : "NO PHONE",
                                s.activeDeviceMac.empty() ? "" : s.activeDeviceMac });
@@ -451,6 +455,13 @@ void App::adaptSave() {
   storage_.putInt("kwp.frame", adaptFrame_);
   storage_.commit();
   diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);
+}
+
+// Mirror the App phonebook (used for the browse list + caller-ID lookup) from the
+// BT layer's PBAP download. Called when the contact count changes.
+void App::syncPhonebook() {
+  phonebook_.clear();
+  for (const auto& c : bt_.contacts()) phonebook_.add(c.name, c.number, 500);
 }
 
 // ---- diagnostics sampling + rendering ----
@@ -770,6 +781,11 @@ void App::renderScreen() {
   auto devs = bt_.pairedDevices();
   int n = screen_ == Screen::SwitchDevice ? static_cast<int>(devs.size()) : screenItemCount();
   if (screen_ == Screen::SwitchDevice && n == 0) { display_.drawText(0, 24, kFontCompressedLeft, "SCANNING..."); return; }
+  if (screen_ == Screen::Phonebook && n == 0) {
+    display_.drawText(0, 24, kFontCompressedLeft, bt_.status().linked ? "SYNCING..." : "NO PHONE");
+    display_.drawText(0, 40, kFontCompressedLeft, "ALLOW ON PHONE");
+    return;
+  }
   const int visible = 8;
   int start = listIndex_ - visible / 2;
   if (start < 0) start = 0;

@@ -11,6 +11,7 @@
 #pragma once
 #include "../IBluetooth.h"
 #include "../../Config.h"
+#include "../../bt/Phonebook.h"
 #include <Arduino.h>
 #include <deque>
 #include <map>
@@ -39,6 +40,10 @@ public:
     // Re-poll STATUS so the active device tracks connect/disconnect/switch.
     uint32_t now = millis();
     if (now - lastStatusPoll_ > kStatusPollMs) { lastStatusPoll_ = now; sendCommand("STATUS"); }
+    // PBAP fallbacks: if OPEN never confirmed a PBAP link, pull anyway (it may
+    // already be open); and don't leave a stalled download flag set forever.
+    if (pbapPullQueued_ && now - pbapStart_ > 1500) firePbapPull(0);
+    if (pbapPulling_   && now - pbapStart_ > 15000) pbapPulling_ = false;
   }
   uint32_t rxBytes() const { return rxBytes_; }
 
@@ -79,6 +84,18 @@ public:
   }
   void disconnectActive() override { if (activeDev_) sendCommand("CLOSE " + link(A2DP)); }
 
+  // ---- PBAP phonebook (Melody PB_PULL) ----
+  std::vector<Contact> contacts() const override { return book_.entries(); }
+  size_t contactCount() const override { return book_.size(); }
+  void pullPhonebook() override {
+    std::string mac = activeMac();
+    if (mac.empty()) return;
+    book_.clear(); book_.beginPull();
+    pbapPulling_ = true; pbapPullQueued_ = true; pbapStart_ = millis();
+    sendCommand("OPEN " + mac + " PBAP");     // PB_PULL fires on OPEN_OK/LINK for PBAP
+    changed();
+  }
+
   std::vector<BtDevice> pairedDevices() const override { return paired_; }
   void refreshDevices() override { sendCommand("STATUS"); sendCommand("LIST"); }
 
@@ -106,6 +123,20 @@ private:
   std::string link(int profile) const {
     int dev = activeDev_ > 0 ? activeDev_ : 1;
     std::string s; s.push_back(hexc(dev)); s.push_back(hexc(profile)); return s;
+  }
+  // MAC of the current active device (for OPEN/PB_PULL).
+  std::string activeMac() const {
+    auto it = mediaDev_.find(activeDev_);
+    if (it != mediaDev_.end() && !it->second.empty()) return it->second;
+    return st_.activeDeviceMac;
+  }
+  // Fire the queued PB_PULL once the PBAP link is up (repository 1=local,
+  // phonebook 1=main; maxlist/start/filter default -> VERSION+FN+N+TEL).
+  void firePbapPull(int dev) {
+    if (!pbapPullQueued_) return;
+    pbapPullQueued_ = false;
+    std::string lk; lk.push_back(hexc(dev > 0 ? dev : (activeDev_ > 0 ? activeDev_ : 1))); lk.push_back(hexc(PBAP));
+    sendCommand("PB_PULL " + lk + " 1 1");
   }
 
   static std::vector<std::string> tokens(const std::string& s) {
@@ -159,6 +190,9 @@ private:
       BtDevice* d = findDev(mac);
       if (d && !d->name.empty()) st_.activeDeviceName = d->name;
       else { st_.activeDeviceName.clear(); sendCommand("NAME " + mac); }
+      // Auto-download this phone's contacts once (for caller-ID). The phone shows
+      // a one-time PBAP permission prompt; if denied we simply get no contacts.
+      if (mac != pulledMac_) { pulledMac_ = mac; pullPhonebook(); }
       changed();
     }
   }
@@ -182,6 +216,8 @@ private:
     if (prof == A2DP || prof == AVRCP) mediaDev_[dev] = mac;
     if (prof == A2DP && st == "STREAMING") streamDev_ = dev;   // the audio source
     if (prof == AVRCP) { avrcpPlaying_[dev] = (st == "PLAYING"); if (st == "PLAYING") streamDev_ = dev; }
+    if (prof == PBAP) firePbapPull(dev);                       // PBAP already up -> download
+
     if (BtDevice* d = findDev(mac)) d->connected = true;
     else paired_.push_back({mac, "", true});
   }
@@ -189,6 +225,16 @@ private:
   void parse(const std::string& l) {
     auto t = tokens(l);
     bool ch = false;
+
+    // ---- PBAP phonebook download in progress: feed vCard lines to the parser ----
+    // Melody streams "PB_PULL <link> <size> BEGIN:VCARD", the vCard body, then a
+    // final "OK". vCard lines match no event keyword, so we still let them fall
+    // through harmlessly; we only special-case the terminating OK.
+    if (pbapPulling_) {
+      book_.feedLine(l, kMaxContacts);
+      if (l == "OK") { pbapPulling_ = false; changed(); return; }
+      if ((!t.empty() && t[0] == "PB_PULL") || l.find("VCARD") != std::string::npos) { changed(); return; }
+    }
 
     // ---- STATUS scan: STATE ... LINK ... LINK ... OK ----
     if (l.rfind("STATE ", 0) == 0) { scanning_ = true; mediaDev_.clear(); avrcpPlaying_.clear(); streamDev_ = 0; for (auto& d : paired_) d.connected = false; return; }
@@ -200,6 +246,7 @@ private:
     if (t.size() >= 4 && t[0] == "OPEN_OK") {                 // OPEN_OK <id> <profile> <mac>
       int id = (hexv(t[1][0]) << 4) | (t[1].size() > 1 ? hexv(t[1][1]) : 0);
       int prof = id & 0xF; if (prof == A2DP || prof == AVRCP) { mediaDev_[id >> 4] = t.size() >= 4 ? t[3] : ""; chooseActive(); }
+      if (prof == PBAP) firePbapPull(id >> 4);                // PBAP link up -> start the download
       st_.linked = true; ch = true;
     }
     if (has(l, "CLOSE_OK")) {
@@ -275,6 +322,13 @@ private:
   bool scanning_ = false;                // inside a STATUS response
   bool singleDevice_ = false;
   uint32_t lastStatusPoll_ = 0;
+  // PBAP phonebook download state
+  Phonebook book_;                       // accumulated contacts (parsed vCards)
+  bool pbapPulling_ = false;             // a PB_PULL is streaming
+  bool pbapPullQueued_ = false;          // waiting for the PBAP link before PB_PULL
+  uint32_t pbapStart_ = 0;
+  std::string pulledMac_;                // device we've already auto-pulled (once per mac)
+  static constexpr size_t kMaxContacts = 500;
 };
 
 } // namespace mmi

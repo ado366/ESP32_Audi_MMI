@@ -71,6 +71,9 @@ public:
     status_.title = title; status_.artist = artist; status_.playing = true; changed();
   }
   const std::vector<Contact>& phonebook() const { return phonebook_; }
+  std::vector<Contact> contacts() const override { return phonebook_; }
+  size_t contactCount() const override { return phonebook_.size(); }
+  void pullPhonebook() override { changed(); }   // already populated; just nudge a refresh
   uint8_t micGain() const { return micGain_; }
 
 private:

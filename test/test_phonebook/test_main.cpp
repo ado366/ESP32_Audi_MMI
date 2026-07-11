@@ -5,16 +5,37 @@
 using namespace mmi;
 
 void test_parse_pbap_stream() {
+  // Real Melody PB_PULL output: vCards, one per notification, terminated by OK.
   Phonebook pb;
   const std::string s =
-    "PBAP_PB NAME: Alice\r"
-    "PBAP_PB TEL: +41 79 123 45 67\r"
-    "PBAP_PB NAME: Bob\r"
-    "PBAP_PB TEL: 0797654321\r"
-    "PBAP_PB OK\r";
+    "PENDING\r"
+    "PB_PULL 16 90 BEGIN:VCARD\r"
+    "VERSION:2.1\r"
+    "FN;CHARSET=UTF-8:Alice\r"
+    "N;CHARSET=UTF-8:Smith;Alice;;;\r"
+    "TEL;TYPE=CELL:+41 79 123 45 67\r"
+    "END:VCARD\r"
+    "PB_PULL 16 70 BEGIN:VCARD\r"
+    "VERSION:2.1\r"
+    "N;CHARSET=UTF-8:Jones;Bob;;;\r"     // no FN -> falls back to N ("Bob Jones")
+    "TEL;TYPE=HOME:0797654321\r"
+    "END:VCARD\r"
+    "OK\r";
   size_t n = pb.loadFromPbap(s, 100);
   TEST_ASSERT_EQUAL_UINT(2, n);
   TEST_ASSERT_EQUAL_STRING("Alice", pb.entries()[0].name.c_str());
+  TEST_ASSERT_EQUAL_STRING("+41 79 123 45 67", pb.entries()[0].number.c_str());
+  TEST_ASSERT_EQUAL_STRING("Bob Jones", pb.entries()[1].name.c_str());
+}
+
+void test_incremental_feed() {
+  // Same data fed one line at a time (as it arrives over serial).
+  Phonebook pb; pb.beginPull();
+  const char* lines[] = {
+    "PB_PULL 16 90 BEGIN:VCARD", "FN:Carol", "TEL:0781112223", "END:VCARD" };
+  for (auto l : lines) pb.feedLine(l, 100);
+  TEST_ASSERT_EQUAL_UINT(1, pb.size());
+  TEST_ASSERT_EQUAL_STRING("Carol", pb.entries()[0].name.c_str());
 }
 
 void test_lookup_tolerant_matching() {
@@ -30,8 +51,9 @@ void test_max_entries_cap() {
   Phonebook pb;
   std::string s;
   for (int i = 0; i < 10; ++i)
-    s += "PBAP_PB NAME: C" + std::to_string(i) + "\rPBAP_PB TEL: 0790000" + std::to_string(100 + i) + "\r";
-  s += "PBAP_PB OK\r";
+    s += "PB_PULL 16 50 BEGIN:VCARD\rFN:C" + std::to_string(i) +
+         "\rTEL:0790000" + std::to_string(100 + i) + "\rEND:VCARD\r";
+  s += "OK\r";
   size_t n = pb.loadFromPbap(s, 3); // cap at 3 ("memory permitting")
   TEST_ASSERT_EQUAL_UINT(3, n);
 }
@@ -44,6 +66,7 @@ void test_normalize() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_parse_pbap_stream);
+  RUN_TEST(test_incremental_feed);
   RUN_TEST(test_lookup_tolerant_matching);
   RUN_TEST(test_max_entries_cap);
   RUN_TEST(test_normalize);

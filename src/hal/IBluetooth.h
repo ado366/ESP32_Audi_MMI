@@ -57,6 +57,12 @@ public:
   virtual void connectDevice(const std::string& mac) = 0; // disconnects others
   virtual void disconnectActive() = 0;
 
+  // PBAP phonebook: trigger a download from the active device (async — contacts
+  // stream in over time), and read the accumulated contact list.
+  virtual void pullPhonebook() {}
+  virtual std::vector<Contact> contacts() const { return {}; }
+  virtual size_t contactCount() const { return 0; }   // cheap size (avoids copying contacts())
+
   // Paired/known devices (from the BC127 LIST); refreshDevices() re-queries the
   // module (STATUS + LIST). Used by the Switch-Device screen.
   virtual std::vector<BtDevice> pairedDevices() const { return {}; }

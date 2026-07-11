@@ -65,6 +65,7 @@ private:
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
   void adaptAdjust(int dir);       // change the selected Adaptation timing field
   void adaptSave();                // persist + apply KWP timing
+  void syncPhonebook();            // mirror phonebook_ from bt_.contacts() (PBAP)
   std::vector<std::string> wrapText(const std::string& s, int width, int maxLines) const;  // word-wrap
   int  screenItemCount() const;
   std::string marquee(const std::string& s, int width = kWin) const;
