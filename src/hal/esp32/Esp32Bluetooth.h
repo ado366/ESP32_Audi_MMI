@@ -13,6 +13,7 @@
 #include "../../Config.h"
 #include "../../bt/Phonebook.h"
 #include <Arduino.h>
+#include <SPIFFS.h>
 #include <deque>
 #include <map>
 #include <vector>
@@ -37,26 +38,38 @@ public:
       if (c == '\r' || c == '\n') { if (!line_.empty()) { logLine("< " + line_); parse(line_); line_.clear(); } }
       else if (line_.size() < 256) line_.push_back(c);
     }
-    // Re-poll STATUS so the active device tracks connect/disconnect/switch.
+    // Re-poll STATUS so the active device tracks connect/disconnect/switch —
+    // but NOT mid-pull: the STATUS response ends with "OK", which the pull
+    // handler would mistake for the download's terminating OK and truncate it.
     uint32_t now = millis();
-    if (now - lastStatusPoll_ > kStatusPollMs) { lastStatusPoll_ = now; sendCommand("STATUS"); }
+    if (!pbapPulling_ && !pbapPullQueued_ &&
+        now - lastStatusPoll_ > kStatusPollMs) { lastStatusPoll_ = now; sendCommand("STATUS"); }
     // The queued PB_PULL fires on OPEN_OK / LINK-up for the PBAP profile (see
     // parse()); firing it early hits "wrong parameter" because the link isn't up
     // yet. Just give up quietly if the link never comes / the download stalls.
+    // A full pull of hundreds of contacts takes tens of seconds, so time out on
+    // INACTIVITY (stream stopped), not total duration.
     if (pbapPullQueued_ && now - pbapStart_ > 8000)  { pbapPullQueued_ = false; pbapPulling_ = false; }
-    if (pbapPulling_    && now - pbapStart_ > 15000) pbapPulling_ = false;
+    if (pbapPulling_ && (now - pbapLastRx_ > 5000 || now - pbapStart_ > 90000)) pbapPulling_ = false;
 
-    // Debounced phonebook auto-pull: only download once the active phone has been
-    // stably active for a few seconds, so the book doesn't re-sync every time the
-    // active device flip-flops between two connected phones.
-    std::string am = activeMac();
-    if (!am.empty() && !macEq(am, pbapSourceMac_)) {
-      if (!macEq(am, pendingPullMac_)) { pendingPullMac_ = am; pendingPullSince_ = now; }
-      else if (now - pendingPullSince_ > 3000 && !pbapPulling_ && !pbapPullQueued_) {
-        startPull(activeDev_, am, 0); pendingPullMac_.clear();
+    // Only reconcile the phonebook when NOT mid-pull, so an in-flight download
+    // isn't disrupted by the active device oscillating.
+    if (!pbapPulling_ && !pbapPullQueued_) {
+      std::string am = activeMac();
+      // 1) Switch the displayed book to the active phone's CACHED contacts
+      //    (instant), debounced so it doesn't flip while the active device wavers.
+      if (!am.empty() && !macEq(am, pbapSourceMac_)) {
+        if (!macEq(am, pendingPullMac_)) { pendingPullMac_ = am; pendingPullSince_ = now; }
+        else if (now - pendingPullSince_ > 2500) { loadCache(am); pbapSourceMac_ = am; changed(); pendingPullMac_.clear(); }
+      } else {
+        pendingPullMac_.clear();
+        // 2) Background-refresh the active phone ONCE per session to pick up new
+        //    contacts (into a temp if a cache is showing; swaps in on OK).
+        if (!am.empty() && macEq(am, pbapSourceMac_) && !refreshedThisSession(am)) {
+          refreshed_.push_back(am);
+          startPull(activeDev_, am, 0);
+        }
       }
-    } else {
-      pendingPullMac_.clear();
     }
   }
   uint32_t rxBytes() const { return rxBytes_; }
@@ -107,7 +120,11 @@ public:
     for (const auto& d : paired_) if (macEq(d.mac, pbapSourceMac_) && !d.name.empty()) return d.name;
     return pbapSourceMac_.empty() ? "" : st_.activeDeviceName;
   }
-  void pullPhonebook() override { startPull(activeDev_, activeMac(), 0); }
+  void pullPhonebook() override {
+    std::string am = activeMac();
+    if (book_.size() == 0 && loadCache(am)) { pbapSourceMac_ = am; changed(); }  // show cache while refreshing
+    startPull(activeDev_, am, 0);
+  }
   // Recent calls = combined call history (PB_PULL phonebook 5).
   std::vector<Contact> callHistory() const override { return calls_.entries(); }
   size_t callHistoryCount() const override { return calls_.size(); }
@@ -149,6 +166,37 @@ private:
   }
   std::string link6(int dev) const { std::string s; s.push_back(hexc(dev)); s.push_back(hexc(PBAP)); return s; }
 
+  // ---- per-phone contact cache on SPIFFS (so contacts show instantly on
+  //      reconnect; a background pull then refreshes them) ----
+  static std::string cachePath(const std::string& mac) {
+    std::string p = "/pb_";
+    for (char c : mac) if (isalnum((unsigned char)c)) p.push_back(c);
+    return p + ".dat";
+  }
+  void saveCache(const std::string& mac) {
+    if (mac.empty() || !SPIFFS.begin(true)) return;
+    File f = SPIFFS.open(cachePath(mac).c_str(), "w"); if (!f) return;
+    for (const auto& c : book_.entries()) { f.print(c.name.c_str()); f.print('\t'); f.print(c.number.c_str()); f.print('\n'); }
+    f.close();
+  }
+  bool loadCache(const std::string& mac) {              // fills book_; false if no cache
+    book_.clear();
+    if (mac.empty() || !SPIFFS.begin(true)) return false;
+    File f = SPIFFS.open(cachePath(mac).c_str(), "r"); if (!f) return false;
+    while (f.available()) {
+      String line = f.readStringUntil('\n');
+      int tab = line.indexOf('\t'); if (tab < 0) continue;
+      book_.add(std::string(line.substring(0, tab).c_str()),
+                std::string(line.substring(tab + 1).c_str()), kMaxContacts);
+    }
+    f.close();
+    return book_.size() > 0;
+  }
+  bool refreshedThisSession(const std::string& mac) const {
+    for (const auto& m : refreshed_) if (macEq(m, mac)) return true;
+    return false;
+  }
+
   // repository 1=local; phonebook 1=contacts, 5=combined call history.
   void sendPbPull(int dev) { sendCommand("PB_PULL " + link6(dev) + (pbapTarget_ ? " 1 5" : " 1 1")); }
 
@@ -159,10 +207,14 @@ private:
   void startPull(int dev, const std::string& mac, int target) {
     if (dev <= 0 || mac.empty()) return;
     pbapTarget_ = target;
-    Phonebook& bk = target ? calls_ : book_;
+    // No cache yet -> pull straight into book_ so contacts appear incrementally.
+    // Cache already showing -> pull into a temp and swap on completion (the cached
+    // list stays on screen during the slow refresh). Calls always pull direct.
+    pullIntoTmp_ = (target == 0 && book_.size() > 0);
+    Phonebook& bk = target ? calls_ : (pullIntoTmp_ ? pullTmp_ : book_);
     bk.clear(); bk.beginPull();
     pbapSourceMac_ = mac; pbapPullDev_ = dev;
-    pbapPulling_ = true; pbapStart_ = millis();
+    pbapPulling_ = true; pbapStart_ = millis(); pbapLastRx_ = pbapStart_;
     if (pbapDev_ == dev) { pbapPullQueued_ = false; sendPbPull(dev); }
     else {
       if (pbapDev_ && pbapDev_ != dev) sendCommand("CLOSE " + link6(pbapDev_)); // free the single PBAP slot
@@ -177,6 +229,7 @@ private:
     if (!pbapPullQueued_) return;
     if (pbapPullDev_ && dev > 0 && dev != pbapPullDev_) return;  // not this phone's link yet
     pbapPullQueued_ = false;
+    pbapLastRx_ = millis();          // stream starts now; inactivity clock from here
     int d = dev > 0 ? dev : (pbapPullDev_ > 0 ? pbapPullDev_ : activeDev_);
     sendPbPull(d);
   }
@@ -272,8 +325,18 @@ private:
     // final "OK". vCard lines match no event keyword, so we still let them fall
     // through harmlessly; we only special-case the terminating OK.
     if (pbapPulling_) {
-      (pbapTarget_ ? calls_ : book_).feedLine(l, kMaxContacts);
-      if (l == "OK") { pbapPulling_ = false; changed(); return; }
+      pbapLastRx_ = millis();                         // stream is alive
+      (pbapTarget_ ? calls_ : (pullIntoTmp_ ? pullTmp_ : book_)).feedLine(l, kMaxContacts);
+      // Only a bare OK outside a STATUS scan ends the pull — a scan's own
+      // terminating OK (STATE...LINK...OK) must fall through to the scan logic.
+      if (l == "OK" && !scanning_) {                  // download complete
+        pbapPulling_ = false;
+        if (pbapTarget_ == 0) {
+          if (pullIntoTmp_ && pullTmp_.size() > 0) book_ = pullTmp_;   // swap the refresh in
+          if (book_.size() > 0) saveCache(pbapSourceMac_);            // persist for next time
+        }
+        changed(); return;
+      }
       if ((!t.empty() && t[0] == "PB_PULL") || l.find("VCARD") != std::string::npos) { changed(); return; }
     }
 
@@ -364,12 +427,16 @@ private:
   bool singleDevice_ = false;
   uint32_t lastStatusPoll_ = 0;
   // PBAP phonebook download state
-  Phonebook book_;                       // accumulated contacts (parsed vCards)
+  Phonebook book_;                       // displayed contacts (from cache or last good pull)
+  Phonebook pullTmp_;                    // in-progress contacts pull (swaps into book_ on OK)
   Phonebook calls_;                      // accumulated call history (phonebook 5)
+  std::vector<std::string> refreshed_;   // phones already background-refreshed this session
   int  pbapTarget_ = 0;                  // current pull target: 0=contacts, 1=calls
+  bool pullIntoTmp_ = false;             // contacts pull goes to pullTmp_ (cache showing) vs book_
   bool pbapPulling_ = false;             // a PB_PULL is streaming
   bool pbapPullQueued_ = false;          // waiting for the PBAP link before PB_PULL
   uint32_t pbapStart_ = 0;
+  uint32_t pbapLastRx_ = 0;              // last time a pull line arrived (inactivity timeout)
   int  pbapDev_ = 0;                     // device that currently holds the (single) PBAP link
   int  pbapPullDev_ = 0;                 // device we're pulling from
   std::string pbapSourceMac_;            // mac the current book_ belongs to
