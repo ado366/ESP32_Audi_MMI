@@ -19,9 +19,9 @@ static const MenuItem kPhone[] = {
 static const MenuItem kBluetooth[] = {
   LEAF("ONE DEVICE", BtSingleDevice),
   LEAF("PAIR NEW",   BtPair),
-  LEAF("AUTOCONNECT",BtAutoConnect),
   LEAF("RESET BC127",BtReset),
   LEAF("BC127 SET",  BtSettings),
+  // Hidden (unbuilt, low value): AUTOCONNECT (BtAutoConnect).
 };
 
 static const MenuItem kDiagnostics[] = {
@@ -31,8 +31,7 @@ static const MenuItem kDiagnostics[] = {
   LEAF("READ GROUP", DiagReadGroup),
   LEAF("READ FAULTS",DiagReadFaults),
   LEAF("GRAPH VALUE",DiagGraph),
-  LEAF("DISP MODE",  DiagDisplayMode),
-  LEAF("VAG-COM",    DiagVagcom),
+  // Hidden (unbuilt, low value): DISP MODE (DiagDisplayMode), VAG-COM (DiagVagcom).
 };
 
 static const MenuItem kAdaptation[] = {
@@ -53,12 +52,9 @@ static const MenuItem kDebug[] = {
 static const MenuItem kSettings[] = {
   LEAF("WIFI",       SetWifi),
   LEAF("UPDATE FW",  SetUpdate),
-  LEAF("PARKING",    SetParking),
-  LEAF("UNITS",      SetUnits),
-  LEAF("AUTOSTART",  SetAutostart),
-  LEAF("TOP LINE",   SetTopLine),
-  LEAF("LOGO",       SetLogo),
   LEAF("VERSION",    SetVersion),
+  // Hidden (unbuilt FIS-Control extras, not v1 features): PARKING (SetParking),
+  // UNITS (SetUnits), AUTOSTART (SetAutostart), TOP LINE (SetTopLine), LOGO (SetLogo).
 };
 
 #define SUBMENU(lbl, arr) MenuItem{ lbl, arr, static_cast<uint8_t>(sizeof(arr)/sizeof(arr[0])), MenuId::None }

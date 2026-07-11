@@ -4,6 +4,7 @@
 #include "ui/InputRouter.h"
 #include "ui/MenuTree.h"
 #include "ui/GraphRenderer.h"
+#include "ui/TurboIcon.h"
 #include "diag/DtcDescriptions.h"
 #include "diag/DtcElaboration.h"
 #include "diag/SpeedoRenderer.h"
@@ -608,20 +609,22 @@ void App::renderDiag() {
   }
 
   if (view == View::Boost) {
+    // FIS-Control "Ladedruck" layout: value + BAR on top, a turbocharger symbol
+    // on the left with a rising histogram gauge to its right, min/max below.
     float mn = 0, mx = 2.5f;
     if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
       const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max;
     }
     Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
     float frac = (mx > mn) ? (m.value - mn) / (mx - mn) : 0.f;
-    auto bar = GraphRenderer::renderBar(frac, 60, 16);
     display_.beginFullScreen(true);
-    std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
-    display_.drawText(0, 0, kFontCompressedLeft, l);
-    display_.drawText(0, 14, kFontCompressedLeft, "TURBO");
-    display_.drawBitmap(2, 26, 60, 16, bar.data());
-    std::snprintf(l, sizeof(l), "%.1f", mn); display_.drawText(0, 48, kFontCompressedLeft, l);
-    std::snprintf(l, sizeof(l), "%.1f BAR", mx); display_.drawText(30, 48, kFontCompressedLeft, l);
+    display_.drawText(0, 0, kFontCentered, fmt(m).c_str());   // boost value
+    display_.drawText(0, 12, kFontCentered, "BAR");
+    display_.drawBitmap(1, 30, kTurboW, kTurboH, turboIcon());        // turbo symbol (left)
+    auto bars = GraphRenderer::renderBars(frac, 28, 26);
+    display_.drawBitmap(34, 30, 28, 26, bars.data());                 // rising gauge (right)
+    std::snprintf(l, sizeof(l), "%.1f", mn); display_.drawText(0, 60, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "%.1f BAR", mx); display_.drawText(34, 60, kFontCompressedLeft, l);
     return;
   }
 

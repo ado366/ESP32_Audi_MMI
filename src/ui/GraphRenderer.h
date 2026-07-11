@@ -75,6 +75,36 @@ public:
     for (int x = 1; x <= fillW; ++x) for (int y = 2; y < h - 2; ++y) setPx(x, y);
     return bmp;
   }
+
+  // Rising histogram gauge (FIS-Control turbo style): `bars` vertical bars of
+  // increasing height; the ones up to `frac` are filled solid, the rest are
+  // drawn as hollow outlines — so you read the current boost by how many fill.
+  static std::vector<uint8_t> renderBars(float frac, uint8_t w, uint8_t h, int bars = 9) {
+    std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
+    if (w < 3 || h < 3 || bars < 1) return bmp;
+    if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+    auto setPx = [&](int x, int y) {
+      if (x < 0 || x >= w || y < 0 || y >= h) return;
+      size_t bit = static_cast<size_t>(y) * w + x;
+      bmp[bit >> 3] |= (0x80 >> (bit & 7));
+    };
+    int cell = w / bars;                 // per-bar column (bar + gap)
+    if (cell < 2) { cell = 2; bars = w / cell; }
+    int bw = cell - 1;                   // bar width (1px gap)
+    int lit = static_cast<int>(frac * bars + 0.5f);
+    for (int i = 0; i < bars; ++i) {
+      int barH = 2 + (h - 2) * (i + 1) / bars;   // staircase: taller to the right
+      if (barH > h) barH = h;
+      int x0 = i * cell, y0 = h - barH;
+      if (i < lit) {                              // filled up to current level
+        for (int x = x0; x < x0 + bw; ++x) for (int y = y0; y < h; ++y) setPx(x, y);
+      } else {                                    // hollow outline
+        for (int x = x0; x < x0 + bw; ++x) { setPx(x, y0); setPx(x, h - 1); }
+        for (int y = y0; y < h; ++y) { setPx(x0, y); setPx(x0 + bw - 1, y); }
+      }
+    }
+    return bmp;
+  }
 };
 
 } // namespace mmi
