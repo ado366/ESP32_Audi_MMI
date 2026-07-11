@@ -38,7 +38,7 @@ public:
 private:
   // A leaf screen opened from the menu.
   enum class Screen : uint8_t {
-    None, SwitchDevice, Phonebook, MicTest, ButtonMonitor, Bc127Debug,
+    None, SwitchDevice, Phonebook, RecentCalls, MicTest, ButtonMonitor, Bc127Debug,
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
     DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults, Speedo,
     SelectEcu, // pick the KWP module to talk to
@@ -79,6 +79,7 @@ private:
   MenuSystem       menu_;
   BluetoothManager btMgr_;
   Phonebook        phonebook_;
+  Phonebook        callHistory_;   // recent calls (PBAP combined history)
   PresetStore      presets_;
   ISystem*         sys_ = nullptr;
   IRadio*          radio_ = nullptr;

@@ -2,6 +2,7 @@
 #include "Phonebook.h"
 #include <cctype>
 #include <cstdint>
+#include <algorithm>
 
 namespace mmi {
 
@@ -82,8 +83,11 @@ void Phonebook::feedLine(const std::string& raw, size_t maxEntries) {
   // BEGIN:VCARD"), so match on the marker anywhere in the line.
   if (line.find("BEGIN:VCARD") != std::string::npos) { inVcard_ = true; haveFn_ = false; vcName_.clear(); vcTel_.clear(); return; }
   if (line.find("END:VCARD")   != std::string::npos) {
-    if (inVcard_ && (!vcName_.empty() || !vcTel_.empty())) add(vcName_, vcTel_, maxEntries);
-    inVcard_ = false; return;
+    // Some contacts have only a number (no FN/N) -> show the number instead of a
+    // blank row. Skip entries with neither name nor number.
+    if (inVcard_ && (!vcName_.empty() || !vcTel_.empty()))
+      add(vcName_.empty() ? vcTel_ : vcName_, vcTel_, maxEntries);
+    inVcard_ = false; qpCont_ = 0; return;
   }
   if (!inVcard_) return;
 
@@ -124,6 +128,17 @@ size_t Phonebook::loadFromPbap(const std::string& stream, size_t maxEntries) {
     feedLine(line, maxEntries);
   }
   return entries_.size();
+}
+
+void Phonebook::sortByName() {
+  std::sort(entries_.begin(), entries_.end(), [](const Contact& a, const Contact& b) {
+    const std::string &x = a.name, &y = b.name;
+    for (size_t i = 0; i < x.size() && i < y.size(); ++i) {
+      int cx = std::toupper((unsigned char)x[i]), cy = std::toupper((unsigned char)y[i]);
+      if (cx != cy) return cx < cy;
+    }
+    return x.size() < y.size();
+  });
 }
 
 std::string Phonebook::lookup(const std::string& number) const {

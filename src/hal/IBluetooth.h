@@ -63,6 +63,10 @@ public:
   virtual std::vector<Contact> contacts() const { return {}; }
   virtual size_t contactCount() const { return 0; }   // cheap size (avoids copying contacts())
   virtual std::string contactsSource() const { return ""; }  // name of the phone the book is from
+  // Recent calls = combined call history (incoming/outgoing/missed).
+  virtual void pullCallHistory() {}
+  virtual std::vector<Contact> callHistory() const { return {}; }
+  virtual size_t callHistoryCount() const { return 0; }
 
   // Paired/known devices (from the BC127 LIST); refreshDevices() re-queries the
   // module (STATUS + LIST). Used by the Switch-Device screen.

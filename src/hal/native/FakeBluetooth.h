@@ -75,6 +75,9 @@ public:
   size_t contactCount() const override { return phonebook_.size(); }
   std::string contactsSource() const override { return status_.activeDeviceName; }
   void pullPhonebook() override { changed(); }   // already populated; just nudge a refresh
+  std::vector<Contact> callHistory() const override { return callHistory_; }
+  size_t callHistoryCount() const override { return callHistory_.size(); }
+  void pullCallHistory() override { changed(); }
   uint8_t micGain() const { return micGain_; }
 
 private:
@@ -95,6 +98,7 @@ private:
   std::deque<std::string> log_;     // recent traffic for the BC127 debug view
   std::vector<Contact> pairbook_;   // paired devices (name/mac)
   std::vector<Contact> phonebook_;  // PBAP contacts (raw)
+  std::vector<Contact> callHistory_ = {{"ALICE", "+41791234567"}, {"UNKNOWN", "+41780000000"}, {"BOB", "+41797654321"}};
   Phonebook book_;                  // resolver over phonebook_
   uint8_t micGain_ = 8;
 };

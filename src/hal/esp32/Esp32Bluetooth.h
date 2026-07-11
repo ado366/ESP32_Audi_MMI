@@ -94,7 +94,11 @@ public:
     for (const auto& d : paired_) if (macEq(d.mac, pbapSourceMac_) && !d.name.empty()) return d.name;
     return pbapSourceMac_.empty() ? "" : st_.activeDeviceName;
   }
-  void pullPhonebook() override { startPull(activeDev_, activeMac()); }
+  void pullPhonebook() override { startPull(activeDev_, activeMac(), 0); }
+  // Recent calls = combined call history (PB_PULL phonebook 5).
+  std::vector<Contact> callHistory() const override { return calls_.entries(); }
+  size_t callHistoryCount() const override { return calls_.size(); }
+  void pullCallHistory() override { startPull(activeDev_, activeMac(), 1); }
 
   std::vector<BtDevice> pairedDevices() const override { return paired_; }
   void refreshDevices() override { sendCommand("STATUS"); sendCommand("LIST"); }
@@ -132,15 +136,21 @@ private:
   }
   std::string link6(int dev) const { std::string s; s.push_back(hexc(dev)); s.push_back(hexc(PBAP)); return s; }
 
-  // Start a phonebook download from device <dev> (mac). If that phone's PBAP link
-  // is already up, PB_PULL immediately; otherwise free any other PBAP link (the
-  // module only allows one) and OPEN PBAP — the pull fires when the link is up.
-  void startPull(int dev, const std::string& mac) {
+  // repository 1=local; phonebook 1=contacts, 5=combined call history.
+  void sendPbPull(int dev) { sendCommand("PB_PULL " + link6(dev) + (pbapTarget_ ? " 1 5" : " 1 1")); }
+
+  // Start a PBAP download from device <dev> (mac) into contacts (target 0) or
+  // call history (target 1). If that phone's PBAP link is already up, PB_PULL
+  // immediately; otherwise free any other PBAP link (the module only allows one)
+  // and OPEN PBAP — the pull fires when the link is up.
+  void startPull(int dev, const std::string& mac, int target) {
     if (dev <= 0 || mac.empty()) return;
-    book_.clear(); book_.beginPull();
+    pbapTarget_ = target;
+    Phonebook& bk = target ? calls_ : book_;
+    bk.clear(); bk.beginPull();
     pbapSourceMac_ = mac; pbapPullDev_ = dev;
     pbapPulling_ = true; pbapStart_ = millis();
-    if (pbapDev_ == dev) { pbapPullQueued_ = false; sendCommand("PB_PULL " + link6(dev) + " 1 1"); }
+    if (pbapDev_ == dev) { pbapPullQueued_ = false; sendPbPull(dev); }
     else {
       if (pbapDev_ && pbapDev_ != dev) sendCommand("CLOSE " + link6(pbapDev_)); // free the single PBAP slot
       pbapPullQueued_ = true;
@@ -149,15 +159,13 @@ private:
     changed();
   }
 
-  // Fire the queued PB_PULL for the RIGHT phone once its PBAP link is up
-  // (repository 1=local, phonebook 1=main; maxlist/start/filter default ->
-  // VERSION+FN+N+TEL).
+  // Fire the queued PB_PULL for the RIGHT phone once its PBAP link is up.
   void firePbapPull(int dev) {
     if (!pbapPullQueued_) return;
     if (pbapPullDev_ && dev > 0 && dev != pbapPullDev_) return;  // not this phone's link yet
     pbapPullQueued_ = false;
     int d = dev > 0 ? dev : (pbapPullDev_ > 0 ? pbapPullDev_ : activeDev_);
-    sendCommand("PB_PULL " + link6(d) + " 1 1");
+    sendPbPull(d);
   }
 
   static std::vector<std::string> tokens(const std::string& s) {
@@ -214,7 +222,7 @@ private:
       // Auto-download the active phone's contacts (for caller-ID + browse). The
       // phonebook follows the active device; switching phones re-pulls. The phone
       // shows a one-time PBAP permission prompt; if denied we get no contacts.
-      if (!macEq(mac, pbapSourceMac_)) startPull(dev, mac);
+      if (!macEq(mac, pbapSourceMac_)) startPull(dev, mac, 0);
       changed();
     }
   }
@@ -253,7 +261,7 @@ private:
     // final "OK". vCard lines match no event keyword, so we still let them fall
     // through harmlessly; we only special-case the terminating OK.
     if (pbapPulling_) {
-      book_.feedLine(l, kMaxContacts);
+      (pbapTarget_ ? calls_ : book_).feedLine(l, kMaxContacts);
       if (l == "OK") { pbapPulling_ = false; changed(); return; }
       if ((!t.empty() && t[0] == "PB_PULL") || l.find("VCARD") != std::string::npos) { changed(); return; }
     }
@@ -346,6 +354,8 @@ private:
   uint32_t lastStatusPoll_ = 0;
   // PBAP phonebook download state
   Phonebook book_;                       // accumulated contacts (parsed vCards)
+  Phonebook calls_;                      // accumulated call history (phonebook 5)
+  int  pbapTarget_ = 0;                  // current pull target: 0=contacts, 1=calls
   bool pbapPulling_ = false;             // a PB_PULL is streaming
   bool pbapPullQueued_ = false;          // waiting for the PBAP link before PB_PULL
   uint32_t pbapStart_ = 0;

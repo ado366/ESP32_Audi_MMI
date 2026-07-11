@@ -12,7 +12,7 @@ namespace mmi {
 enum class MenuId : uint16_t {
   None = 0,
   // Bluetooth
-  BtActiveDevice, BtSwitchDevice, BtPair, BtPhonebook, BtAutoConnect, BtReset, BtSettings, BtCalls, BtSingleDevice,
+  BtActiveDevice, BtSwitchDevice, BtPair, BtPhonebook, BtRecentCalls, BtAutoConnect, BtReset, BtSettings, BtCalls, BtSingleDevice,
   // Diagnostics
   DiagSelectEcu, DiagSpeedo, DiagFavourites, DiagReadGroup, DiagReadFaults, DiagGraph, DiagDisplayMode, DiagVagcom,
   // Adaptation

@@ -29,6 +29,9 @@ public:
   // feeds each line). Clears first. Returns the number of contacts loaded.
   size_t loadFromPbap(const std::string& stream, size_t maxEntries);
 
+  // Sort entries alphabetically by name (case-insensitive, first name first).
+  void sortByName();
+
   // Resolve a dialled/incoming number to a name; "" if unknown.
   std::string lookup(const std::string& number) const;
 

@@ -92,6 +92,11 @@ void App::tick(uint32_t nowMs) {
   // Keep the phonebook (browse list + caller-ID) mirrored from the PBAP download
   // as contacts stream in. Cheap size check; rebuild only when it changes.
   if (bt_.contactCount() != phonebook_.size()) { syncPhonebook(); dirty_ = true; }
+  if (bt_.callHistoryCount() != callHistory_.size()) {   // recent-calls list
+    callHistory_.clear();
+    for (const auto& c : bt_.callHistory()) callHistory_.add(c.name, c.number, 200);
+    dirty_ = true;
+  }
 
   // Calibration takes over the screen; only the encoder long-press cancels it.
   if (inputs_.calibrating()) {
@@ -138,7 +143,8 @@ void App::tick(uint32_t nowMs) {
     }
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
-      screen_ == Screen::DiagFaults) dirty_ = true; // live (fault-desc marquee)
+      screen_ == Screen::DiagFaults || screen_ == Screen::Phonebook ||
+      screen_ == Screen::RecentCalls) dirty_ = true; // live (marquee long names)
   // Speedo renders on its 150ms sample (isDiagScreen); the display redraws the
   // big bitmap only when the km/h value actually changes, so no per-tick churn.
 
@@ -210,6 +216,7 @@ int App::screenItemCount() const {
   switch (screen_) {
     case Screen::SwitchDevice:   return static_cast<int>(bt_.pairedDevices().size());
     case Screen::Phonebook:      return static_cast<int>(phonebook_.size());
+    case Screen::RecentCalls:    return static_cast<int>(callHistory_.size());
     case Screen::DiagFavourites: return presets_.size();
     case Screen::DiagFaults:     return static_cast<int>(faults_.size());
     case Screen::SelectEcu:      return ecu::kModuleCount;
@@ -339,6 +346,10 @@ void App::screenSelect() {
     const auto& e = phonebook_.entries();
     if (listIndex_ < static_cast<int>(e.size())) bt_.dial(e[listIndex_].number);
     screen_ = Screen::None;
+  } else if (screen_ == Screen::RecentCalls) {
+    const auto& e = callHistory_.entries();
+    if (listIndex_ < static_cast<int>(e.size())) bt_.dial(e[listIndex_].number);   // redial
+    screen_ = Screen::None;
   } else if (screen_ == Screen::SelectEcu) {
     if (listIndex_ >= 0 && listIndex_ < ecu::kModuleCount) readEcu_ = ecu::kModules[listIndex_].addr;
     group_.count = 0; faultsLoaded_ = false; faults_.clear();   // stale data belongs to the old module
@@ -383,7 +394,8 @@ void App::onMenuSelect(MenuId id) {
   switch (id) {
     // ---- Phone / Bluetooth ----
     case MenuId::BtSwitchDevice: bt_.refreshDevices(); openScreen(Screen::SwitchDevice); break;
-    case MenuId::BtPhonebook:    openScreen(Screen::Phonebook); bt_.pullPhonebook(); break;  // trigger PBAP download
+    case MenuId::BtPhonebook:    openScreen(Screen::Phonebook); bt_.pullPhonebook(); break;   // PBAP contacts
+    case MenuId::BtRecentCalls:  openScreen(Screen::RecentCalls); bt_.pullCallHistory(); break; // PBAP call history
     case MenuId::BtActiveDevice:
       showInfo("ACTIVE DEV", { s.linked ? (s.activeDeviceName.empty() ? "PHONE" : s.activeDeviceName) : "NO PHONE",
                                s.activeDeviceMac.empty() ? "" : s.activeDeviceMac });
@@ -469,6 +481,7 @@ void App::adaptSave() {
 void App::syncPhonebook() {
   phonebook_.clear();
   for (const auto& c : bt_.contacts()) phonebook_.add(c.name, c.number, 500);
+  phonebook_.sortByName();          // alphabetical by first name
 }
 
 // ---- diagnostics sampling + rendering ----
@@ -800,10 +813,12 @@ void App::renderScreen() {
     if (upd && sys_) display_.drawText(0, 70, kFontCompressedLeft, "SEL=PULL UPDATE");
     return;
   }
-  // Phonebook header shows WHICH phone the contacts belong to (the active device).
+  // Phonebook shows WHICH phone the contacts belong to; RecentCalls is labelled.
+  bool isPb = screen_ == Screen::Phonebook, isRc = screen_ == Screen::RecentCalls;
   std::string hdr = screen_ == Screen::SwitchDevice ? "SWITCH DEV"
-                  : screen_ == Screen::SelectEcu ? "SELECT ECU" : "PHONEBOOK";
-  if (screen_ == Screen::Phonebook) {
+                  : screen_ == Screen::SelectEcu ? "SELECT ECU"
+                  : isRc ? "RECENT" : "PHONEBOOK";
+  if (isPb) {
     std::string src = bt_.contactsSource();
     if (src.empty()) src = bt_.status().activeDeviceName;
     if (!src.empty()) hdr = src.substr(0, 10);   // e.g. "ONEPLUS 9"
@@ -812,7 +827,7 @@ void App::renderScreen() {
   auto devs = bt_.pairedDevices();
   int n = screen_ == Screen::SwitchDevice ? static_cast<int>(devs.size()) : screenItemCount();
   if (screen_ == Screen::SwitchDevice && n == 0) { display_.drawText(0, 24, kFontCompressedLeft, "SCANNING..."); return; }
-  if (screen_ == Screen::Phonebook && n == 0) {
+  if ((isPb || isRc) && n == 0) {
     display_.drawText(0, 24, kFontCompressedLeft, bt_.status().linked ? "SYNCING..." : "NO PHONE");
     display_.drawText(0, 40, kFontCompressedLeft, "ALLOW ON PHONE");
     return;
@@ -833,8 +848,11 @@ void App::renderScreen() {
     } else if (screen_ == Screen::SelectEcu) {
       const auto& m = ecu::kModules[i];
       std::snprintf(line, sizeof(line), "%c%s", m.addr == readEcu_ ? '*' : ' ', m.name);  // * = current
-    } else {
-      std::snprintf(line, sizeof(line), " %s", phonebook_.entries()[i].name.c_str());
+    } else {  // Phonebook / RecentCalls
+      const Phonebook& pb = isRc ? callHistory_ : phonebook_;
+      std::string nm = pb.entries()[i].name;
+      if (i == listIndex_ && static_cast<int>(nm.size()) > 13) nm = marquee(nm, 13);  // scroll long names
+      std::snprintf(line, sizeof(line), " %s", nm.c_str());
     }
     // Selected row gets the inverse highlight bar instead of a '>' marker.
     display_.drawText(0, static_cast<uint8_t>(16 + row * 8),
