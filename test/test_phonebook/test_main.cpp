@@ -2,6 +2,7 @@
 #include <unity.h>
 #include "../../src/bt/Phonebook.h"
 #include "../../src/ui/FisCharset.h"
+#include <cctype>
 
 using namespace mmi;
 
@@ -59,6 +60,18 @@ void test_max_entries_cap() {
   TEST_ASSERT_EQUAL_UINT(3, n);
 }
 
+void test_sort_names_then_numbers() {
+  Phonebook pb;
+  pb.add("Bob", "1", 100); pb.add("+420123456", "2", 100);
+  pb.add("alice", "3", 100); pb.add("777888999", "4", 100);
+  pb.sortByName();
+  TEST_ASSERT_EQUAL_STRING("alice", pb.entries()[0].name.c_str());     // named, A-Z, case-insensitive
+  TEST_ASSERT_EQUAL_STRING("Bob",   pb.entries()[1].name.c_str());
+  // number-only entries sort to the end
+  TEST_ASSERT_TRUE(pb.entries()[2].name[0] == '+' || std::isdigit((unsigned char)pb.entries()[2].name[0]));
+  TEST_ASSERT_TRUE(pb.entries()[3].name[0] == '+' || std::isdigit((unsigned char)pb.entries()[3].name[0]));
+}
+
 void test_quoted_printable() {
   // Some phones QP-encode names; must decode =XX and soft-break continuations.
   Phonebook pb; pb.beginPull();
@@ -91,6 +104,7 @@ int main(int, char**) {
   RUN_TEST(test_incremental_feed);
   RUN_TEST(test_lookup_tolerant_matching);
   RUN_TEST(test_max_entries_cap);
+  RUN_TEST(test_sort_names_then_numbers);
   RUN_TEST(test_quoted_printable);
   RUN_TEST(test_fis_charset_mapping);
   RUN_TEST(test_normalize);

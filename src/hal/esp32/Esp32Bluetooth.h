@@ -45,6 +45,19 @@ public:
     // yet. Just give up quietly if the link never comes / the download stalls.
     if (pbapPullQueued_ && now - pbapStart_ > 8000)  { pbapPullQueued_ = false; pbapPulling_ = false; }
     if (pbapPulling_    && now - pbapStart_ > 15000) pbapPulling_ = false;
+
+    // Debounced phonebook auto-pull: only download once the active phone has been
+    // stably active for a few seconds, so the book doesn't re-sync every time the
+    // active device flip-flops between two connected phones.
+    std::string am = activeMac();
+    if (!am.empty() && !macEq(am, pbapSourceMac_)) {
+      if (!macEq(am, pendingPullMac_)) { pendingPullMac_ = am; pendingPullSince_ = now; }
+      else if (now - pendingPullSince_ > 3000 && !pbapPulling_ && !pbapPullQueued_) {
+        startPull(activeDev_, am, 0); pendingPullMac_.clear();
+      }
+    } else {
+      pendingPullMac_.clear();
+    }
   }
   uint32_t rxBytes() const { return rxBytes_; }
 
@@ -219,10 +232,8 @@ private:
       BtDevice* d = findDev(mac);
       if (d && !d->name.empty()) st_.activeDeviceName = d->name;
       else { st_.activeDeviceName.clear(); sendCommand("NAME " + mac); }
-      // Auto-download the active phone's contacts (for caller-ID + browse). The
-      // phonebook follows the active device; switching phones re-pulls. The phone
-      // shows a one-time PBAP permission prompt; if denied we get no contacts.
-      if (!macEq(mac, pbapSourceMac_)) startPull(dev, mac, 0);
+      // Phonebook auto-pull is handled by a debounce in poll() (see below), so
+      // the book doesn't thrash while the active device oscillates between phones.
       changed();
     }
   }
@@ -362,6 +373,8 @@ private:
   int  pbapDev_ = 0;                     // device that currently holds the (single) PBAP link
   int  pbapPullDev_ = 0;                 // device we're pulling from
   std::string pbapSourceMac_;            // mac the current book_ belongs to
+  std::string pendingPullMac_;           // candidate active phone awaiting the debounce
+  uint32_t pendingPullSince_ = 0;
   static constexpr size_t kMaxContacts = 500;
 };
 

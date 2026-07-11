@@ -131,7 +131,11 @@ size_t Phonebook::loadFromPbap(const std::string& stream, size_t maxEntries) {
 }
 
 void Phonebook::sortByName() {
-  std::sort(entries_.begin(), entries_.end(), [](const Contact& a, const Contact& b) {
+  // Named contacts A-Z first; number-only entries (name is a phone number) last.
+  auto isNum = [](const std::string& s) { return !s.empty() && (std::isdigit((unsigned char)s[0]) || s[0] == '+'); };
+  std::sort(entries_.begin(), entries_.end(), [&](const Contact& a, const Contact& b) {
+    bool an = isNum(a.name), bn = isNum(b.name);
+    if (an != bn) return bn;                       // a is named, b is a number -> a first
     const std::string &x = a.name, &y = b.name;
     for (size_t i = 0; i < x.size() && i < y.size(); ++i) {
       int cx = std::toupper((unsigned char)x[i]), cy = std::toupper((unsigned char)y[i]);
