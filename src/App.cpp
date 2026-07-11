@@ -95,8 +95,8 @@ void App::mediaStep(int dir) {
 
 bool App::isDiagScreen() const {
   return screen_ == Screen::DiagFavourites || screen_ == Screen::DiagReadGroup ||
-         screen_ == Screen::DiagGraph || screen_ == Screen::DiagFaults ||
-         screen_ == Screen::Speedo;
+         screen_ == Screen::DiagGraph || screen_ == Screen::DiagBoost ||
+         screen_ == Screen::DiagFaults || screen_ == Screen::Speedo;
 }
 
 void App::tick(uint32_t nowMs) {
@@ -149,6 +149,7 @@ void App::tick(uint32_t nowMs) {
   if (isDiagScreen()) {
     uint32_t interval = (screen_ == Screen::DiagFaults) ? 400u
                       : (screen_ == Screen::Speedo)     ? 250u    // FIS bitmap send is slow; don't outpace it
+                      : (screen_ == Screen::DiagBoost)  ? 250u    // draws turbo + bar bitmaps; same care as speedo
                       : 150u;
     if (now_ - lastSample_ > interval) {
       lastSample_ = now_;
@@ -307,7 +308,7 @@ bool App::handleScreen(Action a) {
       default: return false;
     }
   }
-  if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph) {
+  if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph || screen_ == Screen::DiagBoost) {
     switch (a) {
       case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); dirty_ = true; return true;
       case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); dirty_ = true; return true;
@@ -437,6 +438,7 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::DiagFavourites: openScreen(Screen::DiagFavourites); break;
     case MenuId::DiagReadGroup:  readGroup_ = 2; openScreen(Screen::DiagReadGroup); break;
     case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
+    case MenuId::DiagBoost:      readGroup_ = 11; openScreen(Screen::DiagBoost);    break;  // TURBO gauge (rotate = pick block)
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
 
     // ---- Adaptation (per-vehicle KWP timing) ----
@@ -600,6 +602,8 @@ void App::renderDiag() {
     header = p.label[0] ? p.label : "FAV";
   } else if (screen_ == Screen::DiagGraph) {
     view = View::Graph;
+  } else if (screen_ == Screen::DiagBoost) {
+    view = View::Boost;
   }
 
   if (view == View::TopLine) {
@@ -620,6 +624,10 @@ void App::renderDiag() {
     display_.beginFullScreen(true);
     display_.drawText(0, 0, kFontCentered, fmt(m).c_str());   // boost value
     display_.drawText(0, 12, kFontCentered, "BAR");
+    if (screen_ == Screen::DiagBoost) {                       // standalone: show/adjust which block
+      std::snprintf(l, sizeof(l), "GRP %u", static_cast<unsigned>(readGroup_));
+      display_.drawText(0, 22, kFontCompressedCenter, l);
+    }
     display_.drawBitmap(1, 30, kTurboW, kTurboH, turboIcon());        // turbo symbol (left)
     auto bars = GraphRenderer::renderBars(frac, 28, 26);
     display_.drawBitmap(34, 30, 28, 26, bars.data());                 // rising gauge (right)
@@ -629,9 +637,16 @@ void App::renderDiag() {
   }
 
   if (view == View::Graph) {
-    Preset def; float mn = 0, mx = 5000, g1 = -1e9f, g2 = -1e9f;
+    float mn = 0, mx = 5000, g1 = -1e9f, g2 = -1e9f;
     if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
       const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max; g1 = p.guide1; g2 = p.guide2;
+    } else if (!graph_.empty()) {
+      // Standalone GRAPH VALUE: auto-scale to the data so any value plots a
+      // visible line (a fixed 0..5000 scale flat-lines coolant temp, boost, etc).
+      mn = mx = graph_[0];
+      for (float v : graph_) { if (v < mn) mn = v; if (v > mx) mx = v; }
+      float pad = (mx - mn) * 0.1f; if (pad < 1.f) pad = 1.f;   // margin; avoid zero range
+      mn -= pad; mx += pad;
     }
     auto bmp = GraphRenderer::render(graph_, mn, mx, kGraphW, 48, g1, g2);
     display_.beginFullScreen(true);

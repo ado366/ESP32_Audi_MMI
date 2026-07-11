@@ -83,10 +83,14 @@ void Phonebook::feedLine(const std::string& raw, size_t maxEntries) {
   // BEGIN:VCARD"), so match on the marker anywhere in the line.
   if (line.find("BEGIN:VCARD") != std::string::npos) { inVcard_ = true; haveFn_ = false; vcName_.clear(); vcTel_.clear(); return; }
   if (line.find("END:VCARD")   != std::string::npos) {
-    // Some contacts have only a number (no FN/N) -> show the number instead of a
-    // blank row. Skip entries with neither name nor number.
+    // Some entries have only a number (no FN/N) -> show the number instead of a
+    // blank row. And some (esp. call-log entries) carry the number in FN with no
+    // separate TEL -> use the name as the number source so it stays dialable
+    // (dial() strips it to digits, so a real name harmlessly yields nothing).
+    // Skip entries with neither name nor number.
     if (inVcard_ && (!vcName_.empty() || !vcTel_.empty()))
-      add(vcName_.empty() ? vcTel_ : vcName_, vcTel_, maxEntries);
+      add(vcName_.empty() ? vcTel_ : vcName_,
+          vcTel_.empty()  ? vcName_ : vcTel_, maxEntries);
     inVcard_ = false; qpCont_ = 0; return;
   }
   if (!inVcard_) return;

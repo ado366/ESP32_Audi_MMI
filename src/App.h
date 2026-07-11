@@ -40,7 +40,7 @@ private:
   enum class Screen : uint8_t {
     None, SwitchDevice, Phonebook, RecentCalls, MicTest, ButtonMonitor, Bc127Debug,
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
-    DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults, Speedo,
+    DiagFavourites, DiagReadGroup, DiagGraph, DiagBoost, DiagFaults, Speedo,
     SelectEcu, // pick the KWP module to talk to
     Adapt,     // per-vehicle KWP timing adjuster (init pulse / inter-byte / inter-frame)
     Charset,   // ROM character explorer (raw byte -> glyph), for mapping accents

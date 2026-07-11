@@ -31,6 +31,7 @@ static const MenuItem kDiagnostics[] = {
   LEAF("READ GROUP", DiagReadGroup),
   LEAF("READ FAULTS",DiagReadFaults),
   LEAF("GRAPH VALUE",DiagGraph),
+  LEAF("TURBO",      DiagBoost),
   // Hidden (unbuilt, low value): DISP MODE (DiagDisplayMode), VAG-COM (DiagVagcom).
 };
 

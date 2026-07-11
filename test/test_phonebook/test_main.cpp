@@ -84,6 +84,17 @@ void test_quoted_printable() {
   TEST_ASSERT_EQUAL_STRING("Monika", pb.entries()[0].name.c_str());
 }
 
+void test_number_only_entry_is_dialable() {
+  // Call-log vCards may carry the number in FN with no TEL. The number field must
+  // fall back to FN so the entry stays dialable from RECENT (was empty -> no-op).
+  Phonebook pb; pb.beginPull();
+  pb.feedLine("BEGIN:VCARD", 100);
+  pb.feedLine("FN:+420777123456", 100);   // number in FN, no TEL line
+  pb.feedLine("END:VCARD", 100);
+  TEST_ASSERT_EQUAL_UINT(1, pb.size());
+  TEST_ASSERT_EQUAL_STRING("+420777123456", pb.entries()[0].number.c_str());
+}
+
 void test_fis_charset_mapping() {
   // Names are stored as UTF-8; the display maps them to THIS cluster's ROM codes
   // (read off the cluster): á=0xC0, š=0xCC, č=0xCB, ž=0xCD. Upper-cased.
@@ -106,6 +117,7 @@ int main(int, char**) {
   RUN_TEST(test_max_entries_cap);
   RUN_TEST(test_sort_names_then_numbers);
   RUN_TEST(test_quoted_printable);
+  RUN_TEST(test_number_only_entry_is_dialable);
   RUN_TEST(test_fis_charset_mapping);
   RUN_TEST(test_normalize);
   return UNITY_END();
