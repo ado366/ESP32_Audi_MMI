@@ -246,6 +246,12 @@ bool App::handleScreen(Action a) {
       default: return true;   // consume nav so it doesn't leak to the menu
     }
   }
+  if (screen_ == Screen::Charset) {
+    if (a == Action::ScrollDown && charsetRow_ < 0xF0) { charsetRow_ += 0x10; dirty_ = true; }
+    else if (a == Action::ScrollUp && charsetRow_ > 0x00) { charsetRow_ -= 0x10; dirty_ = true; }
+    else if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
+    return true;
+  }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
     if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
@@ -414,6 +420,7 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::DbgEncoder:      openScreen(Screen::ButtonMonitor);  break; // shows encoder + ladders
     case MenuId::DbgBc127:        openScreen(Screen::Bc127Debug);     break;
     case MenuId::DbgCalibrate:    inputs_.startCalibration();         break;
+    case MenuId::DbgFisTest:      charsetRow_ = 0xC0; openScreen(Screen::Charset); break;  // ROM charset explorer
 
     // ---- Settings ----
     case MenuId::SetWifi:        openScreen(Screen::WifiInfo);        break;
@@ -700,6 +707,21 @@ void App::renderScreen() {
     display_.drawText(0, 28, kFontCentered, l);
     display_.drawText(0, 60, kFontCompressedLeft, "ROT=ADJUST");
     display_.drawText(0, 72, kFontCompressedLeft, "SEL=SAVE");
+    return;
+  }
+  if (screen_ == Screen::Charset) {
+    char hdr[16];
+    std::snprintf(hdr, sizeof(hdr), "ROM %02X-%02X", charsetRow_, charsetRow_ + 15);
+    display_.drawText(0, 0, kFontCentered, hdr);
+    for (int i = 0; i < 16; ++i) {                 // 3 per line: "XX" label + raw glyph
+      int col = i % 3, row = i / 3;
+      int x = col * 22, y = 14 + row * 11;
+      uint8_t code = static_cast<uint8_t>(charsetRow_ + i);
+      char lbl[3]; std::snprintf(lbl, sizeof(lbl), "%02X", code);
+      display_.drawText(static_cast<uint8_t>(x), static_cast<uint8_t>(y), kFontCompressedLeft, lbl);
+      char g[2] = { static_cast<char>(code), 0 };
+      display_.drawTextRaw(static_cast<uint8_t>(x + 13), static_cast<uint8_t>(y), kFontCompressedLeft, g);
+    }
     return;
   }
   if (screen_ == Screen::ButtonMonitor) {

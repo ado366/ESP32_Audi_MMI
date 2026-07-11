@@ -38,6 +38,9 @@ public:
   // Full-screen graphics mode.
   virtual void beginFullScreen(bool clear = true) = 0;
   virtual void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) = 0;
+  // Like drawText but sends bytes verbatim (no charset mapping) — used by the
+  // charset explorer to see what each raw ROM code renders as.
+  virtual void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) { drawText(x, y, font, text); }
   // 1bpp bitmap, row-major, width/height in pixels (height a multiple of 8).
   virtual void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
                           const uint8_t* data) = 0;

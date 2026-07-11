@@ -43,6 +43,7 @@ private:
     DiagFavourites, DiagReadGroup, DiagGraph, DiagFaults, Speedo,
     SelectEcu, // pick the KWP module to talk to
     Adapt,     // per-vehicle KWP timing adjuster (init pulse / inter-byte / inter-frame)
+    Charset,   // ROM character explorer (raw byte -> glyph), for mapping accents
     Info   // generic title + text lines (version, confirmations, placeholders)
   };
 
@@ -103,6 +104,7 @@ private:
   int                adaptByte_ = 0;         // KWP inter-byte W4 (ms), persisted
   int                adaptFrame_ = 0;        // KWP inter-frame W3 (ms), persisted
   int                adaptField_ = 0;        // which field the Adapt screen edits (0/1/2)
+  uint8_t            charsetRow_ = 0xC0;     // Charset explorer: first code of the shown block
   uint32_t           lastSample_ = 0;
   // Add-to-favourites name picker (Maxi-K style)
   Preset             pendingPreset_;

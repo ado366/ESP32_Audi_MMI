@@ -44,6 +44,7 @@ public:
   void beginFullScreen(bool clear) override { rec_.beginFull(clear); }
   void clear() override { rec_.clear(); }
   void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, fisSafe(text).c_str()); }
+  void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, text); }  // no mapping
   void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* data) override { rec_.bitmap(x, y, w, h, data); }
   void release() override { rec_.release(); }
 
