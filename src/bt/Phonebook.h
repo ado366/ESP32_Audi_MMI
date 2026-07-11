@@ -41,6 +41,7 @@ private:
   std::string vcName_, vcTel_;
   bool        inVcard_ = false;
   bool        haveFn_  = false;   // FN seen -> don't overwrite with N
+  int         qpCont_  = 0;       // quoted-printable soft-break continuation: 0=no, 1=name, 2=tel
 };
 
 } // namespace mmi

@@ -28,7 +28,23 @@ static std::string trim(const std::string& s) {
 }
 
 void Phonebook::beginPull() {
-  inVcard_ = false; haveFn_ = false; vcName_.clear(); vcTel_.clear();
+  inVcard_ = false; haveFn_ = false; qpCont_ = 0; vcName_.clear(); vcTel_.clear();
+}
+
+// Decode quoted-printable (=XX hex bytes) as used by many phones' vCards.
+static int hexv(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  c = (char)std::toupper((unsigned char)c);
+  return (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+}
+static std::string qpDecode(const std::string& s) {
+  std::string o; size_t i = 0;
+  while (i < s.size()) {
+    if (s[i] == '=' && i + 2 < s.size() && hexv(s[i+1]) >= 0 && hexv(s[i+2]) >= 0) {
+      o.push_back((char)((hexv(s[i+1]) << 4) | hexv(s[i+2]))); i += 3;
+    } else { o.push_back(s[i]); ++i; }
+  }
+  return o;
 }
 
 // Turn a structured "N" value ("Family;Given;Middle;Prefix;Suffix") into a
@@ -71,18 +87,30 @@ void Phonebook::feedLine(const std::string& raw, size_t maxEntries) {
   }
   if (!inVcard_) return;
 
+  // Quoted-printable soft-break: a QP value ending in '=' continues on the next
+  // raw line. Append the decoded continuation to the field being built.
+  if (qpCont_) {
+    bool more = !line.empty() && line.back() == '=';
+    std::string dec = qpDecode(more ? line.substr(0, line.size() - 1) : line);
+    if (qpCont_ == 1) vcName_ += dec; else vcTel_ += dec;
+    if (!more) qpCont_ = 0;
+    return;
+  }
+
   // Property line: KEY[;params]:VALUE  (VALUE may itself contain ':')
   size_t colon = line.find(':');
   if (colon == std::string::npos) return;
   std::string key = line.substr(0, colon);
   std::string val = trim(line.substr(colon + 1));
-  size_t semi = key.find(';');
-  std::string base = key.substr(0, semi);
-  for (auto& c : base) c = (char)std::toupper((unsigned char)c);
+  std::string keyUp = key; for (auto& c : keyUp) c = (char)std::toupper((unsigned char)c);
+  std::string base = keyUp.substr(0, keyUp.find(';'));
+  bool qp = keyUp.find("QUOTED-PRINTABLE") != std::string::npos;
+  bool more = qp && !val.empty() && val.back() == '=';
+  if (qp) val = qpDecode(more ? val.substr(0, val.size() - 1) : val);
 
-  if (base == "FN")       { vcName_ = val; haveFn_ = true; }
-  else if (base == "N")   { if (!haveFn_) vcName_ = nameFromN(val); }
-  else if (base == "TEL") { if (vcTel_.empty()) vcTel_ = val; }
+  if (base == "FN")       { vcName_ = val; haveFn_ = true; if (more) qpCont_ = 1; }
+  else if (base == "N")   { if (!haveFn_) { vcName_ = more ? val : nameFromN(val); if (more) qpCont_ = 1; } }
+  else if (base == "TEL") { if (vcTel_.empty()) { vcTel_ = val; if (more) qpCont_ = 2; } }
 }
 
 size_t Phonebook::loadFromPbap(const std::string& stream, size_t maxEntries) {

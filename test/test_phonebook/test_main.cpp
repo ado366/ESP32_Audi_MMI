@@ -59,6 +59,18 @@ void test_max_entries_cap() {
   TEST_ASSERT_EQUAL_UINT(3, n);
 }
 
+void test_quoted_printable() {
+  // Some phones QP-encode names; must decode =XX and soft-break continuations.
+  Phonebook pb; pb.beginPull();
+  pb.feedLine("BEGIN:VCARD", 100);
+  pb.feedLine("FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:=4D=6F=", 100);  // "Mo" + soft break
+  pb.feedLine("=6E=69=6B=61", 100);                                        // "nika"
+  pb.feedLine("TEL:123", 100);
+  pb.feedLine("END:VCARD", 100);
+  TEST_ASSERT_EQUAL_UINT(1, pb.size());
+  TEST_ASSERT_EQUAL_STRING("Monika", pb.entries()[0].name.c_str());
+}
+
 void test_fis_charset_mapping() {
   // Names are stored as UTF-8; the display maps them to THIS cluster's ROM codes
   // (read off the cluster): á=0xC0, š=0xCC, č=0xCB, ž=0xCD. Upper-cased.
@@ -79,6 +91,7 @@ int main(int, char**) {
   RUN_TEST(test_incremental_feed);
   RUN_TEST(test_lookup_tolerant_matching);
   RUN_TEST(test_max_entries_cap);
+  RUN_TEST(test_quoted_printable);
   RUN_TEST(test_fis_charset_mapping);
   RUN_TEST(test_normalize);
   return UNITY_END();
