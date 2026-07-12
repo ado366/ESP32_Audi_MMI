@@ -42,6 +42,7 @@ public:
   // ---- IDisplay: record only ----
   void showTopLines(const char* l1, const char* l2) override { rec_.topLines(fisSafe(l1).c_str(), fisSafe(l2).c_str()); }
   void beginFullScreen(bool clear, uint8_t graphicsTop) override { rec_.beginFull(clear, graphicsTop); }
+  void gaugeTopText(const char* line) override { rec_.setHalfTop(line); }
   void clear() override { rec_.clear(); }
   void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, fisSafe(text).c_str()); }
   void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, text); }  // no mapping
@@ -206,12 +207,15 @@ private:
   FrameRecorder rec_;
   std::vector<FrameOp> drawn_;      // ops currently committed to the screen
   std::string topBuf_;              // last 16-char radio message
+  std::string halfTopBuf_;          // last top-band text sent for a halfscreen gauge
   std::deque<Cmd> q_;
   uint32_t lastWrite_ = 0, lastRedraw_ = 0;
   bool graphics_ = false;           // bus currently in graphics mode
   uint8_t graphicsTop_ = 0;         // >0 => use the fixed lower HALFSCREEN region
-  static constexpr uint8_t kHalfTop = 27;   // documented lower-band origin (leaves the top for radio)
-  static constexpr uint8_t kHalfH   = 48;   // documented lower-band height (fixed; other values hang the bus)
+  // Lower graphics band (infrastructure; gauges currently use full-screen). A 64px
+  // band (y24..88) was verified accepted by this cluster (covers the bottom).
+  static constexpr uint8_t kHalfTop = 24;
+  static constexpr uint8_t kHalfH   = 64;
   bool fullValid_ = false;          // drawn_ describes the live full-screen page
   bool haveTop_ = false, haveWritten_ = false;
   uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts

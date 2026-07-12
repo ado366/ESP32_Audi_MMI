@@ -103,17 +103,21 @@ void App::dialParty(const std::string& name, const std::string& number) {
   bt_.dial(number);
 }
 
-// One short, STATIC line for the top of a gauge screen (radio text when the head
-// unit is the source, else the now-playing title / phone). Not marquee'd, so it
-// only redraws when it actually changes — no per-tick FIS thrash.
-std::string App::topGaugeLine() const {
+// Two STATIC lines for the top of a gauge screen: the head unit's radio text
+// (both lines) when the radio is the source, else the now-playing title + artist,
+// else the phone name. Not marquee'd, so it only redraws when it actually changes
+// — no per-tick FIS thrash. Drawn as graphics text (all one graphics-mode frame).
+void App::topGaugeLines(std::string& l1, std::string& l2) const {
   const BtStatus& st = bt_.status();
-  std::string s;
-  if (radio_ && !radio_->cdMode() && radio_->line1()[0]) s = radio_->line1();
-  else if (st.playing && !st.title.empty())              s = st.title;
-  else if (st.linked)                                    s = st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName;
-  if (s.size() > 10) s = s.substr(0, 10);
-  return s;
+  if (radio_ && !radio_->cdMode() && (radio_->line1()[0] || radio_->line2()[0])) {
+    l1 = radio_->line1(); l2 = radio_->line2();
+  } else if (st.playing && !st.title.empty()) {
+    l1 = st.title; l2 = st.artist;
+  } else {
+    l1 = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName) : "NO PHONE"; l2.clear();
+  }
+  if (l1.size() > 10) l1 = l1.substr(0, 10);
+  if (l2.size() > 10) l2 = l2.substr(0, 10);
 }
 
 // Traffic button = one-touch ring through the driving gauges, so you never have
@@ -689,10 +693,7 @@ void App::renderDiag() {
   char l[24];
 
   if (screen_ == Screen::Speedo) {
-    // Full-screen so WE own the whole display: now-playing on top (static, so it
-    // doesn't thrash the FIS), big speed number below, dark elsewhere (no gear
-    // selector bleeding through).
-    display_.beginFullScreen(true);
+    display_.beginFullScreen(true);                  // full-screen (known-good)
     int spd;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
       int p = static_cast<int>((now_ / 50) % 402u);
@@ -700,10 +701,11 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    std::string top = topGaugeLine();                // static now-playing / radio
-    if (!top.empty()) display_.drawText(0, 2, kFontCompressedCenter, top.c_str());
-    auto bmp = SpeedoRenderer::render(spd, 64, 36);  // big speed digits
-    display_.drawBitmap(0, 28, 64, 36, bmp.data());
+    std::string l1, l2; topGaugeLines(l1, l2);       // now-playing / radio, top third
+    if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
+    if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str());
+    auto bmp = SpeedoRenderer::render(spd, 64, 34);
+    display_.drawBitmap(0, 30, 64, 34, bmp.data());
     display_.drawText(44, 68, kFontCompressedLeft, "KM/H");
     return;
   }
@@ -784,8 +786,9 @@ void App::renderDiag() {
     // Full-screen so WE own the whole display: now-playing on top (static), turbo
     // symbol on the LEFT with a rising histogram beside it, dark elsewhere.
     display_.beginFullScreen(true);
-    { std::string top = topGaugeLine();
-      if (!top.empty()) display_.drawText(0, 2, kFontCompressedCenter, top.c_str()); }
+    { std::string l1, l2; topGaugeLines(l1, l2);
+      if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
+      if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str()); }
 
     float bar, mx = 2.5f; std::string valStr;
     if (screen_ == Screen::DiagBoost) {

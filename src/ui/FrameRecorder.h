@@ -18,8 +18,10 @@ public:
   void topLines(const char* l1, const char* l2) {
     mode_ = "top"; top1_ = l1 ? l1 : ""; top2_ = l2 ? l2 : ""; ops_.clear();
   }
-  void beginFull(bool clear, uint8_t graphicsTop = 0) { mode_ = "full"; gtop_ = graphicsTop; if (clear) ops_.clear(); }
+  void beginFull(bool clear, uint8_t graphicsTop = 0) { mode_ = "full"; gtop_ = graphicsTop; htop_.clear(); if (clear) ops_.clear(); }
   uint8_t gtop() const { return gtop_; }   // graphics region starts here (0 = whole screen)
+  void setHalfTop(const char* s) { htop_ = s ? s : ""; }   // radio/now-playing text for the top band
+  const std::string& htop() const { return htop_; }
   void clear() { ops_.clear(); }
   void release() { mode_ = "top"; top1_.clear(); top2_.clear(); ops_.clear(); }
 
@@ -71,6 +73,7 @@ private:
   }
   std::string mode_ = "top", top1_, top2_;
   uint8_t gtop_ = 0;
+  std::string htop_;
   std::vector<FrameOp> ops_;
 };
 

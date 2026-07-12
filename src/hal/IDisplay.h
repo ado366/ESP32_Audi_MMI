@@ -39,6 +39,9 @@ public:
   // graphicsTop>0 initialises ONLY the region from that Y down for graphics,
   // leaving the top band for the head-unit / radio text (less FIS traffic).
   virtual void beginFullScreen(bool clear = true, uint8_t graphicsTop = 0) = 0;
+  // For a HALFSCREEN gauge: the radio/now-playing text to show on the top band
+  // (drawn via the cluster's own text mode, above the graphics region).
+  virtual void gaugeTopText(const char* line) {}
   virtual void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) = 0;
   // Like drawText but sends bytes verbatim (no charset mapping) — used by the
   // charset explorer to see what each raw ROM code renders as.

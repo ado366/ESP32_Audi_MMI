@@ -64,7 +64,7 @@ private:
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
   void mediaStep(int dir);       // next/prev: BT track, tuner seek, or phone switch by source
-  std::string topGaugeLine() const;   // static (non-scrolling) now-playing/radio line for gauge tops
+  void topGaugeLines(std::string& l1, std::string& l2) const;  // static now-playing/radio, 2 lines, for gauge tops
   void cycleGauge();             // Traffic: one-touch ring Speedo -> Turbo -> Favourites
   Screen lastGauge_ = Screen::Speedo;   // remembered so Traffic from home resumes your preferred gauge
   void seedDefaultGauges();      // seed useful favourites on first boot (so gauges work out-of-box)
@@ -155,7 +155,7 @@ private:
   static constexpr uint32_t kNavCooldownMs = 150;
   bool navReady() { if (now_ - lastNav_ < kNavCooldownMs) return false; lastNav_ = now_; return true; }
   static constexpr int kWin = 8;
-  static constexpr uint8_t kGaugeTop = 27;  // lower HALFSCREEN band (y27..75); top band = radio
+  static constexpr uint8_t kGaugeTop = 24;  // lower HALFSCREEN band origin (matches Esp32Display kHalfTop)
   static constexpr int kGraphW = 64;
 };
 
