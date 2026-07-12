@@ -402,7 +402,9 @@ private:
       int dev = t.size() >= 2 ? (parseId(t[1]) >> 4) : 0;
       if (dev == 0 || dev == activeDev_) { st_.playing = false; ch = true; }
     }
-    if (has(l, "CALL_INCOMING")) { st_.call = CallState::Incoming; st_.callerNumber = afterKey(l, "CALL_INCOMING"); ch = true; }
+    // Format is "CALL_INCOMING <link> [<number>]" — take the token AFTER the link
+    // id, not everything after the keyword (which included the link id itself).
+    if (has(l, "CALL_INCOMING")) { st_.call = CallState::Incoming; if (t.size() >= 3) st_.callerNumber = t[2]; ch = true; }
     if (has(l, "CALL_OUTGOING") || has(l, "CALL_DIAL")) { st_.call = CallState::Outgoing; ch = true; }
     // A call is only ACTIVE (connected) on CALL_ACTIVE. SCO opens *during*
     // outgoing ringing too, so it must NOT by itself flip Outgoing -> Active,
@@ -411,7 +413,7 @@ private:
     if (has(l, "SCO_OPEN")) { st_.scoOpen = true; if (st_.call == CallState::Incoming) st_.call = CallState::Active; ch = true; }
     if (has(l, "SCO_CLOSE")) { st_.scoOpen = false; ch = true; }
     if (has(l, "CALL_END") || has(l, "CALL_IDLE")) { st_.call = CallState::Idle; st_.scoOpen = false; ch = true; }
-    if (has(l, "CALLER_NUMBER")) { st_.callerNumber = afterKey(l, "CALLER_NUMBER"); ch = true; }
+    if (has(l, "CALLER_NUMBER")) { st_.callerNumber = t.size() >= 3 ? t[2] : afterKey(l, "CALLER_NUMBER"); ch = true; }
     if (ch) changed();
   }
 

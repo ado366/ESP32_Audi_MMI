@@ -64,6 +64,8 @@ private:
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
   void mediaStep(int dir);       // next/prev: BT track, tuner seek, or phone switch by source
+  void cycleGauge();             // Traffic: one-touch cycle Speedo -> Turbo -> Favourites -> home
+  void seedDefaultGauges();      // seed useful favourites on first boot (so gauges work out-of-box)
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
   void adaptAdjust(int dir);       // change the selected Adaptation timing field
   void adaptSave();                // persist + apply KWP timing
@@ -128,6 +130,9 @@ private:
   uint32_t    callStartMs_ = 0;
   uint32_t    lastCallSec_ = 0;
   std::string dialedName_, dialedNumber_;
+  // Auto-return to Now-Playing after inactivity in a menu / transient screen.
+  uint32_t lastInputMs_ = 0;
+  static constexpr uint32_t kHomeTimeoutMs = 20000;
   void renderCall();
   std::string callParty() const;   // best name/number to show for the current call
   void dialParty(const std::string& name, const std::string& number);  // dial + remember who

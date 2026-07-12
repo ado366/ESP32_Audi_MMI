@@ -31,6 +31,7 @@ void App::begin() {
   bt_.begin();
   btMgr_.begin();
   presets_.load(storage_);
+  if (storage_.getInt("diag.seeded", 0) == 0) seedDefaultGauges();  // first-boot gauges
   oneDevice_ = storage_.getInt("bt.single", 0) != 0;  // default OFF
   bt_.setSingleDevice(oneDevice_);
   adaptInit_  = storage_.getInt("kwp.init",  200);    // per-vehicle KWP timing
@@ -96,6 +97,42 @@ void App::mediaStep(int dir) {
 void App::dialParty(const std::string& name, const std::string& number) {
   dialedName_ = name; dialedNumber_ = number;   // remembered for the outgoing call screen
   bt_.dial(number);
+}
+
+// Traffic button = one-touch cycle through the driving gauges, so you never have
+// to dive into menus while moving: Now-Playing -> Speedo -> Turbo -> Favourites
+// -> Now-Playing. Favourites is skipped if the user has none.
+void App::cycleGauge() {
+  menuOpen_ = false;
+  switch (screen_) {
+    case Screen::Speedo:    readGroup_ = 11; openScreen(Screen::DiagBoost); break;
+    case Screen::DiagBoost:
+      if (presets_.size() > 0) openScreen(Screen::DiagFavourites);
+      else                     screen_ = Screen::None;
+      break;
+    case Screen::DiagFavourites: screen_ = Screen::None; break;   // full circle -> home
+    default:                     openScreen(Screen::Speedo); break;
+  }
+  dirty_ = true;
+}
+
+// Seed a few useful favourites on first boot so the gauges work out-of-box (the
+// Favourites list was empty, hiding the whole feature). SPEED reads the cluster
+// (always powered); the engine gauges are common EDC15 blocks the user can edit
+// or delete in-menu. Guarded by a one-time flag so deletions stick.
+void App::seedDefaultGauges() {
+  auto add = [&](uint8_t ecu, uint8_t group, uint8_t vi, View v, float mn, float mx, const char* label) {
+    Preset p; p.ecu = ecu; p.group = group; p.valueIndex = vi; p.view = v; p.min = mn; p.max = mx;
+    std::strncpy(p.label, label, 8); p.label[8] = 0; presets_.add(p);
+  };
+  if (presets_.size() == 0) {
+    add(ecu::Dashboard, 1, 0, View::TopLine,   0,  260,  "SPEED");    // cluster: reliable
+    add(ecu::Engine,    1, 0, View::Graph,     0, 5000,  "RPM");
+    add(ecu::Engine,    1, 2, View::TopLine,   0,  150,  "COOLANT");
+    add(ecu::Engine,   11, 0, View::Boost,     0,  2.5f, "BOOST");
+    presets_.save(storage_);
+  }
+  storage_.putInt("diag.seeded", 1); storage_.commit();
 }
 
 // Best label to show for the current call: resolved contact name > caller number
@@ -169,6 +206,7 @@ void App::tick(uint32_t nowMs) {
 
   InputEvent ev;
   while (inputs_.poll(ev)) {
+    lastInputMs_ = now_;   // any input keeps the current screen alive (auto-home timer)
     if (ev.control == Control::EncoderCW || ev.control == Control::EncoderCCW) {
       int steps = ev.encoderDelta >= 0 ? ev.encoderDelta : -ev.encoderDelta;
       Control dir = ev.encoderDelta >= 0 ? Control::EncoderCW : Control::EncoderCCW;
@@ -177,6 +215,16 @@ void App::tick(uint32_t nowMs) {
       dispatch(InputRouter::resolve(ev.control, ctx_));
     }
     ctx_ = deriveContext();
+  }
+
+  // Auto-return to Now-Playing after inactivity in a menu or a transient screen
+  // (phonebook, settings, ...), so you never get stranded in the menus while
+  // driving. Live gauges (speedo/diagnostics) and any call are exempt — you want
+  // those to stay put.
+  if (bt_.status().call == CallState::Idle &&
+      (menuOpen_ || (screen_ != Screen::None && !isDiagScreen())) &&
+      now_ - lastInputMs_ > kHomeTimeoutMs) {
+    menuOpen_ = false; screen_ = Screen::None; dirty_ = true;
   }
 
   // Call state transitions + live in-call timer.
@@ -233,26 +281,33 @@ std::string App::marquee(const std::string& s, int width) const {
 // ---- input handling ----
 
 void App::handle(Action a) {
-  if (screen_ != Screen::None && handleScreen(a)) return;
-
+  // Global hard-button shortcuts work from ANY screen (they're the quick-access
+  // keys), so handle them before delegating to the current screen — a gauge's
+  // handleScreen consumes all nav, which would otherwise swallow these.
   switch (a) {
     case Action::MenuOpenClose:
-      menuOpen_ = !menuOpen_;
-      if (menuOpen_) menu_.reset(); else screen_ = Screen::None;
+      // Always open a fresh menu; if a sub-screen is showing, close it first so
+      // the button isn't a silent no-op (previously it took two presses).
+      if (screen_ != Screen::None) { screen_ = Screen::None; menuOpen_ = true; menu_.reset(); }
+      else { menuOpen_ = !menuOpen_; if (menuOpen_) menu_.reset(); }
       dirty_ = true;
-      break;
+      return;
     case Action::JumpDiagnostics:
-      menuOpen_ = true; screen_ = Screen::None;
-      menu_.openTopLevel(diagnosticsTopIndex());
-      dirty_ = true;
-      break;
+      cycleGauge();   // Traffic = one-touch gauge cycle (Speedo/Turbo/Favourites)
+      return;
     case Action::JumpNowPlaying:
       menuOpen_ = false; screen_ = Screen::None;
       dirty_ = true;
-      break;
+      return;
     case Action::JumpSpeedo:
       menuOpen_ = false; openScreen(Screen::Speedo);   // Info button quick-recall
-      break;
+      return;
+    default: break;
+  }
+
+  if (screen_ != Screen::None && handleScreen(a)) return;
+
+  switch (a) {
     case Action::ScrollDown: if (menuOpen_) { menu_.scrollDown(); dirty_ = true; } else if (canSwitchPhone()) switchPhone(+1); break;
     case Action::ScrollUp:   if (menuOpen_) { menu_.scrollUp();   dirty_ = true; } else if (canSwitchPhone()) switchPhone(-1); break;
     case Action::Select:     if (menuOpen_) { menu_.select();     dirty_ = true; } break;
