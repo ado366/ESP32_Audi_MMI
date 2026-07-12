@@ -428,7 +428,10 @@ private:
     // outgoing ringing too, so it must NOT by itself flip Outgoing -> Active,
     // otherwise the screen shows "IN CALL" before the other side answers.
     if (has(l, "CALL_ACTIVE")) { st_.call = CallState::Active; st_.scoOpen = true; ch = true; }
-    if (has(l, "SCO_OPEN")) { st_.scoOpen = true; if (st_.call == CallState::Incoming) st_.call = CallState::Active; ch = true; }
+    // SCO also opens for IN-BAND RINGING (ringtone through the speakers) before the
+    // call is answered, so SCO_OPEN must NOT flip an incoming/outgoing call to
+    // Active — only CALL_ACTIVE (actual connect) does that.
+    if (has(l, "SCO_OPEN")) { st_.scoOpen = true; ch = true; }
     if (has(l, "SCO_CLOSE")) { st_.scoOpen = false; ch = true; }
     if (has(l, "CALL_END") || has(l, "CALL_IDLE")) { st_.call = CallState::Idle; st_.scoOpen = false; st_.callerNumber.clear(); st_.callerName.clear(); ch = true; }
     if (has(l, "CALLER_NUMBER")) { st_.callerNumber = t.size() >= 3 ? t[2] : afterKey(l, "CALLER_NUMBER"); ch = true; }
