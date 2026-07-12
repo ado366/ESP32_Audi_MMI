@@ -111,12 +111,12 @@ void App::cycleGauge() {
   menuOpen_ = false;
   Screen next;
   switch (screen_) {
-    case Screen::Speedo:         next = Screen::DiagBoost; break;
+    case Screen::Speedo:         readEcu_ = ecu::Engine; readGroup_ = 11; next = Screen::DiagBoost; break;
     case Screen::DiagBoost:      next = presets_.size() > 0 ? Screen::DiagFavourites : Screen::Speedo; break;
     case Screen::DiagFavourites: next = Screen::Speedo; break;
     default:                     next = lastGauge_; break;   // from home: resume preferred gauge
   }
-  if (next == Screen::DiagBoost) readGroup_ = 11;
+  if (next == Screen::DiagBoost) { readEcu_ = ecu::Engine; readGroup_ = 11; }
   openScreen(next);
   lastGauge_ = next;
   dirty_ = true;
@@ -454,7 +454,11 @@ bool App::handleScreen(Action a) {
       default: return false;
     }
   }
-  if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph || screen_ == Screen::DiagBoost) {
+  if (screen_ == Screen::DiagBoost) {   // TURBO is hardcoded (engine grp 11) — no group adjust
+    if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
+    return true;
+  }
+  if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph) {
     switch (a) {
       case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); dirty_ = true; return true;
       case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); dirty_ = true; return true;
@@ -584,7 +588,7 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::DiagFavourites: openScreen(Screen::DiagFavourites); break;
     case MenuId::DiagReadGroup:  readGroup_ = 2; openScreen(Screen::DiagReadGroup); break;
     case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
-    case MenuId::DiagBoost:      readGroup_ = 11; openScreen(Screen::DiagBoost);    break;  // TURBO gauge (rotate = pick block)
+    case MenuId::DiagBoost:      readEcu_ = ecu::Engine; readGroup_ = 11; openScreen(Screen::DiagBoost); break;  // TURBO: engine grp 11 field 3 (boost, mbar->bar)
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
 
     // ---- Adaptation (per-vehicle KWP timing) ----
@@ -672,6 +676,7 @@ void App::renderDiag() {
   char l[24];
 
   if (screen_ == Screen::Speedo) {
+    const BtStatus& bst = bt_.status();
     display_.beginFullScreen(true);
     int spd;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
@@ -680,9 +685,13 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    display_.drawText(0, 12, kFontCentered, "KM/H");     // top 1/3
-    auto bmp = SpeedoRenderer::render(spd, 64, 20);
-    display_.drawBitmap(0, 46, 64, 20, bmp.data());      // bottom 2/3, 7-seg digits (~half size)
+    // top third: currently playing (scrolls if long)
+    if (!bst.title.empty())  display_.drawText(0, 0,  kFontCompressedCenter, marquee(bst.title, 10).c_str());
+    if (!bst.artist.empty()) display_.drawText(0, 11, kFontCompressedCenter, marquee(bst.artist, 10).c_str());
+    // big speed number (bottom 2/3), KM/H small at its bottom-right
+    auto bmp = SpeedoRenderer::render(spd, 64, 28);
+    display_.drawBitmap(0, 28, 64, 28, bmp.data());
+    display_.drawText(44, 60, kFontCompressedLeft, "KM/H");
     return;
   }
 
@@ -759,33 +768,33 @@ void App::renderDiag() {
   }
 
   if (view == View::Boost) {
-    // FIS-Control "Ladedruck" gauge (turbocharger symbol + rising histogram),
-    // shifted into the lower two-thirds so the now-playing title/artist stays
-    // visible in the top third.
+    // FIS-Control "Ladedruck" gauge: turbo symbol + a wide rising histogram, kept
+    // in the lower two-thirds so the now-playing title/artist stays on top.
     const BtStatus& bst = bt_.status();
-    float mn = 0, mx = 2.5f;
-    if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
-      const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max;
-    }
-    Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
-    float frac = (mx > mn) ? (m.value - mn) / (mx - mn) : 0.f;
     display_.beginFullScreen(true);
-    // top third: what's currently playing (scrolls if long)
     if (!bst.title.empty())  display_.drawText(0, 0,  kFontCompressedCenter, marquee(bst.title, 10).c_str());
     if (!bst.artist.empty()) display_.drawText(0, 10, kFontCompressedCenter, marquee(bst.artist, 10).c_str());
-    // boost value (below the top third)
-    display_.drawText(0, 24, kFontCentered, fmt(m).c_str());
-    if (screen_ == Screen::DiagBoost) {                       // standalone: show/adjust which block
-      std::snprintf(l, sizeof(l), "GRP %u", static_cast<unsigned>(readGroup_));
-      display_.drawText(0, 35, kFontCompressedCenter, l);
+
+    float bar, mx = 2.5f; std::string valStr;
+    if (screen_ == Screen::DiagBoost) {
+      // Hardcoded: Engine (0x01) group 11 field 3 (index 2) = boost pressure in
+      // mbar -> display in bar, 1 decimal.
+      Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
+      bar = m.value / 1000.0f;
+      char v[16]; std::snprintf(v, sizeof(v), "%.1f BAR", bar); valStr = v;
+    } else {                                     // favourite preset keeps its own scale/value
+      float pmn = 0;
+      if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
+        const Preset& p = presets_.at(diagPresetIdx_); pmn = p.min; mx = p.max - pmn;
+      }
+      Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
+      bar = m.value - pmn; valStr = fmt(m);
     }
-    // gauge: turbo symbol (left, 40px) + rising bars (right, 24px) — both widths
-    // are multiples of 8 so each bitmap row is byte-aligned for the FIS.
-    display_.drawBitmap(0, 44, kTurboW, kTurboH, turboIcon());
-    auto bars = GraphRenderer::renderBars(frac, 24, kTurboH, 6);   // 6 bars -> 3px each, so fill vs hollow reads
-    display_.drawBitmap(40, 44, 24, kTurboH, bars.data());
-    std::snprintf(l, sizeof(l), "%.1f", mn);     display_.drawText(0, 76, kFontCompressedLeft, l);
-    std::snprintf(l, sizeof(l), "%.1f BAR", mx); display_.drawText(34, 76, kFontCompressedLeft, l);
+    float frac = mx > 0 ? bar / mx : 0.f;
+    display_.drawText(0, 22, kFontCentered, valStr.c_str());              // boost value
+    display_.drawBitmap(12, 32, kTurboW, kTurboH, turboIcon());           // turbo symbol (centered)
+    auto bars = GraphRenderer::renderBars(frac, 64, 20, 14);              // wide FIS-Control-style histogram
+    display_.drawBitmap(0, 64, 64, 20, bars.data());                      // spans full width along the bottom
     return;
   }
 
