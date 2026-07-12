@@ -96,7 +96,8 @@ button:active{background:#666}.grp{margin-bottom:12px}h3{margin:6px 0;color:#fa0
 <button onclick=k('EncoderCW',1)>CW</button><button onclick=k('EncoderHold')>HOLD</button></div>
 <div class=grp><h3>Steering</h3>
 <button onclick=k('SteerLeftPlus')>L+ vol</button><button onclick=k('SteerLeftMinus')>L- vol</button>
-<button onclick=k('SteerRightPlus')>R+ trk/ans</button><button onclick=k('SteerRightMinus')>R- trk/end</button></div>
+<button onclick=k('SteerRightPlus')>R+ trk/ans</button><button onclick=k('SteerRightMinus')>R- trk/end</button>
+<button onclick=k('SteerRightPlusHold')>R+ hold (voice)</button></div>
 </div>
 <script>
 const W=64,H=88,S=4;const cv=document.getElementById('fis'),cx=cv.getContext('2d');
