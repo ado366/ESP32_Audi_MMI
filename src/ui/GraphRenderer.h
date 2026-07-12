@@ -88,15 +88,15 @@ public:
       size_t bit = static_cast<size_t>(y) * w + x;
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
-    const float kExp = 2.8f;                       // steeper -> right bars grow faster
-    float denom = std::exp(kExp) - 1.f;
     int lit = static_cast<int>(frac * bars + 0.5f);
     for (int i = 0; i < bars; ++i) {
       int x0 = i * static_cast<int>(w) / bars;     // spans the full width; last bar reaches w-1
       int x1 = (i + 1) * static_cast<int>(w) / bars - 1;   // 1px gap between bars
       if (x1 < x0) x1 = x0;
+      // Power curve: steady rise with the last few growing fastest (the tallest,
+      // rightmost bar reaches the full height h).
       float t = static_cast<float>(i + 1) / bars;
-      int barH = 2 + static_cast<int>((h - 2) * (std::exp(kExp * t) - 1.f) / denom + 0.5f);
+      int barH = 2 + static_cast<int>((h - 2) * std::pow(t, 1.6f) + 0.5f);
       if (barH > h) barH = h;
       int y0 = h - barH;
       if (i < lit) {                               // filled up to current level

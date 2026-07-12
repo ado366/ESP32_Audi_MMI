@@ -689,7 +689,8 @@ void App::renderDiag() {
   char l[24];
 
   if (screen_ == Screen::Speedo) {
-    // Only the lower band is graphics (head unit keeps the top as radio text).
+    // Only the lower HALFSCREEN band (y27..75) is graphics; the head unit keeps the
+    // top as radio text. All draws MUST stay inside that band.
     display_.beginFullScreen(true, kGaugeTop);
     int spd;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
@@ -698,10 +699,10 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    // big speed number in the lower band, KM/H small at its bottom-right
+    // big speed number, KM/H small at its bottom-right (all within y27..75)
     auto bmp = SpeedoRenderer::render(spd, 64, 34);
-    display_.drawBitmap(0, 32, 64, 34, bmp.data());
-    display_.drawText(44, 68, kFontCompressedLeft, "KM/H");
+    display_.drawBitmap(0, 30, 64, 34, bmp.data());
+    display_.drawText(44, 66, kFontCompressedLeft, "KM/H");
     return;
   }
 
@@ -799,11 +800,12 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    display_.drawText(0, 26, kFontCentered, valStr.c_str());             // boost value (in the lower band)
-    display_.drawBitmap(0, 38, kTurboW, kTurboH, turboIcon());           // turbo symbol on the LEFT (40x32)
-    // Wide rising histogram along the bottom — full width, past the icon.
-    auto bars = GraphRenderer::renderBars(frac, 64, 16, 14);
-    display_.drawBitmap(0, 72, 64, 16, bars.data());
+    // All within the lower HALFSCREEN band (y27..75): value on top, then the turbo
+    // symbol on the LEFT with the rising histogram beside it, rising to its top.
+    display_.drawText(0, 28, kFontCompressedCenter, valStr.c_str());     // boost value
+    display_.drawBitmap(0, 42, kTurboW, kTurboH, turboIcon());           // turbo symbol LEFT (40x32) -> y42..74
+    auto bars = GraphRenderer::renderBars(frac, 24, kTurboH, 8);         // bars RIGHT, same height/top as the icon
+    display_.drawBitmap(40, 42, 24, kTurboH, bars.data());
     return;
   }
 

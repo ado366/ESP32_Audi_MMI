@@ -117,10 +117,11 @@ public:
       // the whole page: initFullScreen clears everything and all rows redraw onto
       // blank — self-correcting, no erase, no partial state.
       case Cmd::Init: {
-        // Whole screen, or only the lower band so the top stays radio/head-unit
-        // text (TLBFISLib "HALFSCREEN"). The FIS init takes X,Y,WIDTH,HEIGHT (NOT
-        // end coords): full = (0,0,64,88); lower band = (0,top,64,88-top).
-        uint8_t ok = graphicsTop_ ? fis_.initScreen(0, graphicsTop_, 64, 88 - graphicsTop_, 0x82)
+        // Whole screen, or the documented lower "HALFSCREEN" band so the top stays
+        // radio/head-unit text. The FIS init takes X,Y,WIDTH,HEIGHT. The partial
+        // region is a FIXED 64x48 at Y=27 (per the VAGFISWriter manual + TLBFISLib);
+        // any other height (e.g. 64) is rejected mid-handshake and hangs the bus.
+        uint8_t ok = graphicsTop_ ? fis_.initScreen(0, kHalfTop, 64, kHalfH, 0x82)
                                   : fis_.initFullScreen();
         if (!ok) { restartRedraw(); pop = false; } else graphics_ = true;
         break;
@@ -204,7 +205,9 @@ private:
   std::deque<Cmd> q_;
   uint32_t lastWrite_ = 0, lastRedraw_ = 0;
   bool graphics_ = false;           // bus currently in graphics mode
-  uint8_t graphicsTop_ = 0;         // graphics region top Y (0 = full screen)
+  uint8_t graphicsTop_ = 0;         // >0 => use the fixed lower HALFSCREEN region
+  static constexpr uint8_t kHalfTop = 27;   // documented lower-band origin (leaves the top for radio)
+  static constexpr uint8_t kHalfH   = 48;   // documented lower-band height (fixed; other values hang the bus)
   bool fullValid_ = false;          // drawn_ describes the live full-screen page
   bool haveTop_ = false, haveWritten_ = false;
   uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts
