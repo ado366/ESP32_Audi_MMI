@@ -103,6 +103,19 @@ void App::dialParty(const std::string& name, const std::string& number) {
   bt_.dial(number);
 }
 
+// One short, STATIC line for the top of a gauge screen (radio text when the head
+// unit is the source, else the now-playing title / phone). Not marquee'd, so it
+// only redraws when it actually changes — no per-tick FIS thrash.
+std::string App::topGaugeLine() const {
+  const BtStatus& st = bt_.status();
+  std::string s;
+  if (radio_ && !radio_->cdMode() && radio_->line1()[0]) s = radio_->line1();
+  else if (st.playing && !st.title.empty())              s = st.title;
+  else if (st.linked)                                    s = st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName;
+  if (s.size() > 10) s = s.substr(0, 10);
+  return s;
+}
+
 // Traffic button = one-touch ring through the driving gauges, so you never have
 // to dive into menus while moving: Speedo -> Turbo -> Favourites -> Speedo.
 // From Now-Playing it resumes your last-viewed gauge (remembered). Back or the
@@ -676,7 +689,7 @@ void App::renderDiag() {
   char l[24];
 
   if (screen_ == Screen::Speedo) {
-    // Only the lower 2/3 is graphics; the top band stays radio/head-unit text.
+    // Only the lower band is graphics (head unit keeps the top as radio text).
     display_.beginFullScreen(true, kGaugeTop);
     int spd;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
@@ -685,10 +698,10 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    // big speed number low in the lower band, KM/H small at its bottom-right
-    auto bmp = SpeedoRenderer::render(spd, 64, 28);
-    display_.drawBitmap(0, 48, 64, 28, bmp.data());
-    display_.drawText(44, 78, kFontCompressedLeft, "KM/H");
+    // big speed number in the lower band, KM/H small at its bottom-right
+    auto bmp = SpeedoRenderer::render(spd, 64, 34);
+    display_.drawBitmap(0, 32, 64, 34, bmp.data());
+    display_.drawText(44, 68, kFontCompressedLeft, "KM/H");
     return;
   }
 
@@ -787,10 +800,10 @@ void App::renderDiag() {
     }
     float frac = mx > 0 ? bar / mx : 0.f;
     display_.drawText(0, 26, kFontCentered, valStr.c_str());             // boost value (in the lower band)
-    display_.drawBitmap(0, 38, kTurboW, kTurboH, turboIcon());           // turbo symbol on the LEFT
-    // Wide rising histogram along the bottom — extends full width, past the icon.
-    auto bars = GraphRenderer::renderBars(frac, 64, 20, 14);
-    display_.drawBitmap(0, 66, 64, 20, bars.data());
+    display_.drawBitmap(0, 38, kTurboW, kTurboH, turboIcon());           // turbo symbol on the LEFT (40x32)
+    // Wide rising histogram along the bottom — full width, past the icon.
+    auto bars = GraphRenderer::renderBars(frac, 64, 16, 14);
+    display_.drawBitmap(0, 72, 64, 16, bars.data());
     return;
   }
 

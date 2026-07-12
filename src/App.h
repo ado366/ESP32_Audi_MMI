@@ -64,6 +64,7 @@ private:
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
   void mediaStep(int dir);       // next/prev: BT track, tuner seek, or phone switch by source
+  std::string topGaugeLine() const;   // static (non-scrolling) now-playing/radio line for gauge tops
   void cycleGauge();             // Traffic: one-touch ring Speedo -> Turbo -> Favourites
   Screen lastGauge_ = Screen::Speedo;   // remembered so Traffic from home resumes your preferred gauge
   void seedDefaultGauges();      // seed useful favourites on first boot (so gauges work out-of-box)

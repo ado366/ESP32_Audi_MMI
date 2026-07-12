@@ -76,10 +76,10 @@ public:
     return bmp;
   }
 
-  // Rising histogram gauge (FIS-Control turbo style): `bars` vertical bars of
-  // increasing height; the ones up to `frac` are filled solid, the rest are
-  // drawn as hollow outlines — so you read the current boost by how many fill.
-  static std::vector<uint8_t> renderBars(float frac, uint8_t w, uint8_t h, int bars = 9) {
+  // Rising histogram gauge (FIS-Control turbo style): `bars` vertical bars that
+  // span the FULL width and rise EXPONENTIALLY (the last few are much taller);
+  // bars up to `frac` are filled solid, the rest hollow — read boost by the fill.
+  static std::vector<uint8_t> renderBars(float frac, uint8_t w, uint8_t h, int bars = 12) {
     std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
     if (w < 3 || h < 3 || bars < 1) return bmp;
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
@@ -88,19 +88,22 @@ public:
       size_t bit = static_cast<size_t>(y) * w + x;
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
-    int cell = w / bars;                 // per-bar column (bar + gap)
-    if (cell < 2) { cell = 2; bars = w / cell; }
-    int bw = cell - 1;                   // bar width (1px gap)
+    const float kExp = 2.8f;                       // steeper -> right bars grow faster
+    float denom = std::exp(kExp) - 1.f;
     int lit = static_cast<int>(frac * bars + 0.5f);
     for (int i = 0; i < bars; ++i) {
-      int barH = 2 + (h - 2) * (i + 1) / bars;   // staircase: taller to the right
+      int x0 = i * static_cast<int>(w) / bars;     // spans the full width; last bar reaches w-1
+      int x1 = (i + 1) * static_cast<int>(w) / bars - 1;   // 1px gap between bars
+      if (x1 < x0) x1 = x0;
+      float t = static_cast<float>(i + 1) / bars;
+      int barH = 2 + static_cast<int>((h - 2) * (std::exp(kExp * t) - 1.f) / denom + 0.5f);
       if (barH > h) barH = h;
-      int x0 = i * cell, y0 = h - barH;
-      if (i < lit) {                              // filled up to current level
-        for (int x = x0; x < x0 + bw; ++x) for (int y = y0; y < h; ++y) setPx(x, y);
-      } else {                                    // hollow outline
-        for (int x = x0; x < x0 + bw; ++x) { setPx(x, y0); setPx(x, h - 1); }
-        for (int y = y0; y < h; ++y) { setPx(x0, y); setPx(x0 + bw - 1, y); }
+      int y0 = h - barH;
+      if (i < lit) {                               // filled up to current level
+        for (int x = x0; x <= x1; ++x) for (int y = y0; y < h; ++y) setPx(x, y);
+      } else {                                     // hollow outline
+        for (int x = x0; x <= x1; ++x) { setPx(x, y0); setPx(x, h - 1); }
+        for (int y = y0; y < h; ++y) { setPx(x0, y); setPx(x1, y); }
       }
     }
     return bmp;

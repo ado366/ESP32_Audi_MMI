@@ -117,9 +117,11 @@ public:
       // the whole page: initFullScreen clears everything and all rows redraw onto
       // blank — self-correcting, no erase, no partial state.
       case Cmd::Init: {
-        // Whole screen, or only the lower band (graphicsTop_..88) so the top stays
-        // radio/head-unit text. 0x82 = init + clear (the initialised region only).
-        uint8_t ok = graphicsTop_ ? fis_.initScreen(0, graphicsTop_, 64, 88, 0x82) : fis_.initFullScreen();
+        // Whole screen, or only the lower band so the top stays radio/head-unit
+        // text (TLBFISLib "HALFSCREEN"). The FIS init takes X,Y,WIDTH,HEIGHT (NOT
+        // end coords): full = (0,0,64,88); lower band = (0,top,64,88-top).
+        uint8_t ok = graphicsTop_ ? fis_.initScreen(0, graphicsTop_, 64, 88 - graphicsTop_, 0x82)
+                                  : fis_.initFullScreen();
         if (!ok) { restartRedraw(); pop = false; } else graphics_ = true;
         break;
       }
