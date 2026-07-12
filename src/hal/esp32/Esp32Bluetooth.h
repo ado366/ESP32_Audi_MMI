@@ -110,6 +110,8 @@ public:
   }
 
   void connectDevice(const std::string& mac) override {
+    manualActive_ = true;                       // user pinned this phone; don't let the
+                                                // other phone's playback hijack "active"
     if (singleDevice_) disconnectActive();     // enforce a single active link
     // If it's already connected (both phones can be), just make it the active
     // control target; otherwise open it. Either way STATUS reconciles link ids.
@@ -282,7 +284,12 @@ private:
       if (best == 0 || kv.first < best) best = kv.first;
       if (!st_.activeDeviceMac.empty() && macEq(kv.second, st_.activeDeviceMac)) keep = kv.first;
     }
-    int dev = streamDev_ ? streamDev_ : (keep ? keep : best);
+    if (keep == 0) manualActive_ = false;   // the pinned phone is gone -> release the pin
+    // Keep the current/manually-chosen active device sticky: once the driver
+    // picks a phone (SWITCH PHONE), don't let the OTHER phone streaming music
+    // hijack "active" — calls/voice must stay on the chosen phone. Only fall
+    // back to the streaming/lowest device when nothing is chosen yet.
+    int dev = keep ? keep : (streamDev_ ? streamDev_ : best);
     if (dev == 0) { activeDev_ = 0; if (st_.linked || !st_.activeDeviceMac.empty()) { st_.linked = false; st_.playing = false; st_.activeDeviceMac.clear(); st_.activeDeviceName.clear(); changed(); } return; }
     setActiveDev(dev);
     bool play = avrcpPlaying_.count(dev) ? avrcpPlaying_[dev] : false;
@@ -401,10 +408,13 @@ private:
         if (t[2] == "ARTIST:") { st_.artist = afterKey(l, "ARTIST:"); ch = true; }
       }
     }
-    // ---- playback: the playing/streaming device becomes active ----
+    // ---- playback: the streaming device auto-becomes active UNLESS the user has
+    //      pinned a phone (manual switch) — then a passenger's playback must not
+    //      hijack "active", so calls/voice stay on the pinned phone. ----
     if (t[0] == "AVRCP_PLAY" || t[0] == "A2DP_STREAM_START") {
-      if (t.size() >= 2) setActiveDev(parseId(t[1]) >> 4);
-      st_.playing = true; ch = true;
+      int dev = t.size() >= 2 ? (parseId(t[1]) >> 4) : 0;
+      if (!manualActive_) { if (dev) setActiveDev(dev); st_.playing = true; ch = true; }
+      else if (dev == activeDev_) { st_.playing = true; ch = true; }   // pinned: only our phone's playback shows
     }
     if (t[0] == "AVRCP_PAUSE" || t[0] == "AVRCP_STOP" || t[0] == "A2DP_STREAM_SUSPEND") {
       int dev = t.size() >= 2 ? (parseId(t[1]) >> 4) : 0;
@@ -446,6 +456,7 @@ private:
   std::map<int, bool> avrcpPlaying_;     // device number -> AVRCP playing, current scan
   int  streamDev_ = 0;                   // device currently streaming/playing, current scan
   int  activeDev_ = 0;                   // active media device number (1..5), 0=none
+  bool manualActive_ = false;            // user pinned the active phone; streaming won't hijack it
   bool scanning_ = false;                // inside a STATUS response
   bool singleDevice_ = false;
   uint32_t lastStatusPoll_ = 0;
