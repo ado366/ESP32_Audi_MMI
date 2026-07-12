@@ -385,9 +385,12 @@ uint8_t VAGFISWriter::sendRawData(char data[]){
   } else {
         if (!sendSingleByteCommand(data[FIS_MSG_COMMAND])) return false;
     if(!waitEnaHigh(100)) {
-        Serial.println("waiting...");
+        // Bounded retry: if the cluster never ACKs (e.g. a rejected/invalid
+        // command) give up instead of recursing forever and hanging the device.
+        static uint8_t _rc0 = 0;
+        if (++_rc0 > 20) { _rc0 = 0; return false; }
         delay(2);
-        return sendRawData(data);
+        uint8_t r = sendRawData(data); _rc0 = 0; return r;
       }
   }
   
@@ -432,9 +435,10 @@ uint8_t VAGFISWriter::sendRawData(uint8_t data[]){
   } else {
         if (!sendSingleByteCommand(data[FIS_MSG_COMMAND])) return false;
         if(!waitEnaHigh(100)) {
+                static uint8_t _rc1 = 0;
+                if (++_rc1 > 20) { _rc1 = 0; return false; }   // bounded retry, never hang
                 delay(2);
-                Serial.println("Ena_never_high"); 
-                return sendRawData(data);
+                uint8_t r = sendRawData(data); _rc1 = 0; return r;
           }
   }
  

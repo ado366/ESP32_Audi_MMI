@@ -172,6 +172,10 @@ private:
 
   // Returns false if the write was dropped so service() can restart the page.
   bool drawOp(const FrameOp& op) {
+    // In HALFSCREEN mode the cluster treats draw Y as RELATIVE to the band origin
+    // (kHalfTop), so convert our absolute Y down. App draws in absolute coords
+    // (y27..75) so the emulator stays correct.
+    uint8_t y = (graphicsTop_ && op.y >= kHalfTop) ? (uint8_t)(op.y - kHalfTop) : op.y;
     if (op.t == 't') {
       // Overwrite the whole 64x7 row background first, in REPLACE mode (graphics
       // mode 2, not XOR): 0xFF = lit bar for a highlighted row, 0x00 = blank
@@ -179,16 +183,16 @@ private:
       // a dropped/half-drawn row), so redrawing a row REPAIRS it; no XOR erase, no
       // desync. Then XOR the text: dark on a lit bg (inverse), lit on a dark bg.
       uint8_t bg[56]; memset(bg, (op.f & kFontHighlight) ? 0xFF : 0x00, sizeof(bg));
-      fis_.GraphicFromArray(0, op.y, 64, 7, bg, 2);          // 2 = replace mode
+      fis_.GraphicFromArray(0, y, 64, 7, bg, 2);             // 2 = replace mode
       delayMicroseconds(5000);                               // settle before text
-      return fis_.sendStringFS(op.x, op.y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
+      return fis_.sendStringFS(op.x, y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
     uint8_t buf[1024];
     int bytes = (op.w * op.h + 7) / 8;
     if (bytes > (int)sizeof(buf)) bytes = sizeof(buf);
     for (int i = 0; i < bytes; ++i)
       buf[i] = (uint8_t)((hexv(op.s[i * 2]) << 4) | hexv(op.s[i * 2 + 1]));
-    fis_.GraphicFromArray(op.x, op.y, op.w, op.h, buf, 2);  // 2 = replace mode (self-correcting, no flash)
+    fis_.GraphicFromArray(op.x, y, op.w, op.h, buf, 2);  // 2 = replace mode (self-correcting, no flash)
     return true;
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
