@@ -41,7 +41,7 @@ public:
 
   // ---- IDisplay: record only ----
   void showTopLines(const char* l1, const char* l2) override { rec_.topLines(fisSafe(l1).c_str(), fisSafe(l2).c_str()); }
-  void beginFullScreen(bool clear) override { rec_.beginFull(clear); }
+  void beginFullScreen(bool clear, uint8_t graphicsTop) override { rec_.beginFull(clear, graphicsTop); }
   void clear() override { rec_.clear(); }
   void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, fisSafe(text).c_str()); }
   void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, text); }  // no mapping
@@ -73,6 +73,7 @@ public:
     // ---- full-screen graphics ----
     haveTop_ = false;
     if (!q_.empty()) return;                    // never interrupt an in-flight redraw
+    graphicsTop_ = rec_.gtop();                 // 0 = whole screen; else init only the lower band
     const auto& ops = rec_.ops();
     uint32_t now = millis();
     if (fullValid_ && opsEqual(ops, drawn_)) return;
@@ -115,7 +116,13 @@ public:
       // erase a row the cluster actually painted). Instead, on ANY failure restart
       // the whole page: initFullScreen clears everything and all rows redraw onto
       // blank — self-correcting, no erase, no partial state.
-      case Cmd::Init:     if (!fis_.initFullScreen()) { restartRedraw(); pop = false; } else graphics_ = true; break;
+      case Cmd::Init: {
+        // Whole screen, or only the lower band (graphicsTop_..88) so the top stays
+        // radio/head-unit text. 0x82 = init + clear (the initialised region only).
+        uint8_t ok = graphicsTop_ ? fis_.initScreen(0, graphicsTop_, 64, 88, 0x82) : fis_.initFullScreen();
+        if (!ok) { restartRedraw(); pop = false; } else graphics_ = true;
+        break;
+      }
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
       case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
@@ -195,6 +202,7 @@ private:
   std::deque<Cmd> q_;
   uint32_t lastWrite_ = 0, lastRedraw_ = 0;
   bool graphics_ = false;           // bus currently in graphics mode
+  uint8_t graphicsTop_ = 0;         // graphics region top Y (0 = full screen)
   bool fullValid_ = false;          // drawn_ describes the live full-screen page
   bool haveTop_ = false, haveWritten_ = false;
   uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts

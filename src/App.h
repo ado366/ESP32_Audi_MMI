@@ -154,6 +154,7 @@ private:
   static constexpr uint32_t kNavCooldownMs = 150;
   bool navReady() { if (now_ - lastNav_ < kNavCooldownMs) return false; lastNav_ = now_; return true; }
   static constexpr int kWin = 8;
+  static constexpr uint8_t kGaugeTop = 24;  // speedo/turbo graphics start here; top band = radio
   static constexpr int kGraphW = 64;
 };
 

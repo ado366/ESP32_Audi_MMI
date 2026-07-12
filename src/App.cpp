@@ -676,8 +676,8 @@ void App::renderDiag() {
   char l[24];
 
   if (screen_ == Screen::Speedo) {
-    const BtStatus& bst = bt_.status();
-    display_.beginFullScreen(true);
+    // Only the lower 2/3 is graphics; the top band stays radio/head-unit text.
+    display_.beginFullScreen(true, kGaugeTop);
     int spd;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
       int p = static_cast<int>((now_ / 50) % 402u);
@@ -685,13 +685,10 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    // top third: currently playing (scrolls if long)
-    if (!bst.title.empty())  display_.drawText(0, 0,  kFontCompressedCenter, marquee(bst.title, 10).c_str());
-    if (!bst.artist.empty()) display_.drawText(0, 11, kFontCompressedCenter, marquee(bst.artist, 10).c_str());
-    // big speed number (bottom 2/3), KM/H small at its bottom-right
+    // big speed number low in the lower band, KM/H small at its bottom-right
     auto bmp = SpeedoRenderer::render(spd, 64, 28);
-    display_.drawBitmap(0, 28, 64, 28, bmp.data());
-    display_.drawText(44, 60, kFontCompressedLeft, "KM/H");
+    display_.drawBitmap(0, 48, 64, 28, bmp.data());
+    display_.drawText(44, 78, kFontCompressedLeft, "KM/H");
     return;
   }
 
@@ -768,12 +765,10 @@ void App::renderDiag() {
   }
 
   if (view == View::Boost) {
-    // FIS-Control "Ladedruck" gauge: turbo symbol + a wide rising histogram, kept
-    // in the lower two-thirds so the now-playing title/artist stays on top.
-    const BtStatus& bst = bt_.status();
-    display_.beginFullScreen(true);
-    if (!bst.title.empty())  display_.drawText(0, 0,  kFontCompressedCenter, marquee(bst.title, 10).c_str());
-    if (!bst.artist.empty()) display_.drawText(0, 10, kFontCompressedCenter, marquee(bst.artist, 10).c_str());
+    // FIS-Control "Ladedruck" gauge: turbo symbol (left) + a wide rising histogram
+    // that extends past it to the right. Only the lower 2/3 is graphics; the top
+    // band stays radio/head-unit text.
+    display_.beginFullScreen(true, kGaugeTop);
 
     float bar, mx = 2.5f; std::string valStr;
     if (screen_ == Screen::DiagBoost) {
@@ -791,10 +786,11 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    display_.drawText(0, 22, kFontCentered, valStr.c_str());              // boost value
-    display_.drawBitmap(12, 32, kTurboW, kTurboH, turboIcon());           // turbo symbol (centered)
-    auto bars = GraphRenderer::renderBars(frac, 64, 20, 14);              // wide FIS-Control-style histogram
-    display_.drawBitmap(0, 64, 64, 20, bars.data());                      // spans full width along the bottom
+    display_.drawText(0, 26, kFontCentered, valStr.c_str());             // boost value (in the lower band)
+    display_.drawBitmap(0, 38, kTurboW, kTurboH, turboIcon());           // turbo symbol on the LEFT
+    // Wide rising histogram along the bottom — extends full width, past the icon.
+    auto bars = GraphRenderer::renderBars(frac, 64, 20, 14);
+    display_.drawBitmap(0, 66, 64, 20, bars.data());
     return;
   }
 
