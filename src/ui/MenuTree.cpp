@@ -10,9 +10,9 @@ namespace mmi {
 static const MenuItem kPhone[] = {
   LEAF("RECENT",     BtRecentCalls),
   LEAF("CONTACTS",   BtPhonebook),
-  LEAF("SWITCH PHONE",BtSwitchDevice),
-  LEAF("ACTIVE PHONE",BtActiveDevice),
-  LEAF("CALLS",      BtCalls),
+  LEAF("SWITCH PHONE",BtSwitchDevice),   // marks the active phone with * (folds in old ACTIVE PHONE)
+  // Removed: ACTIVE PHONE (active phone shows on now-playing + '*' in SWITCH PHONE)
+  //          CALLS (answer/reject/end are on the steering + encoder buttons)
 };
 
 // PAIRING: setup / developer items, done once, not while driving (under Advanced).
