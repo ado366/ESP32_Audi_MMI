@@ -162,15 +162,19 @@ void App::renderCall() {
   const char* label = st.call == CallState::Incoming ? "INCOMING"
                     : st.call == CallState::Outgoing ? "CALLING"
                     : "IN CALL";
+  display_.drawText(0, 4, kFontCentered, label);
+  // Wrap the caller across up to 3 lines so long names ("MONIKA VALKOVA") fit
+  // instead of running off the screen.
   std::string who = callParty();
-  display_.drawText(0, 6, kFontCentered, label);
-  display_.drawText(0, 30, kFontCentered, who.c_str());        // contact name or number
+  auto lines = wrapText(who, 11, 3);
+  for (size_t i = 0; i < lines.size() && i < 3; ++i)
+    display_.drawText(0, static_cast<uint8_t>(22 + i * 12), kFontCompressedCenter, lines[i].c_str());
   if (st.call == CallState::Active) {                          // running call timer M:SS
     uint32_t s = (now_ - callStartMs_) / 1000;
     char t[8]; std::snprintf(t, sizeof(t), "%u:%02u", static_cast<unsigned>(s / 60), static_cast<unsigned>(s % 60));
-    display_.drawText(0, 52, kFontCentered, t);
+    display_.drawText(0, 64, kFontCentered, t);
   } else if (st.call == CallState::Incoming) {
-    display_.drawText(0, 70, kFontCompressedCenter, "CLICK=ANSWER HOLD=NO");
+    display_.drawText(0, 78, kFontCompressedCenter, "CLICK=ANSWER HOLD=NO");
   }
 }
 
