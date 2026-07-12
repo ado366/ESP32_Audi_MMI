@@ -145,8 +145,11 @@ void App::seedDefaultGauges() {
 // > the number/name we dialled (outgoing calls carry no CALLER_NUMBER) > UNKNOWN.
 std::string App::callParty() const {
   const BtStatus& st = bt_.status();
-  std::string name = st.callerName, num = st.callerNumber;
-  if (name.empty() && num.empty()) { name = dialedName_; num = dialedNumber_; }
+  // If WE placed this call, we know exactly who — trust the dialled party over the
+  // module's caller fields, which can be stale from a previous (e.g. incoming)
+  // call. dialed* are set only for our outgoing calls and cleared when it ends.
+  std::string name = dialedName_, num = dialedNumber_;
+  if (name.empty() && num.empty()) { name = st.callerName; num = st.callerNumber; }
   if (name.empty() && !num.empty()) name = phonebook_.lookup(num);
   if (!name.empty()) return name;
   if (!num.empty())  return num;

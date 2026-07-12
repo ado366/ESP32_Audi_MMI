@@ -164,8 +164,15 @@ private:
   static int hexv(char c) { c = toupper(c); return (c >= '0' && c <= '9') ? c - '0' : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : 0; }
 
   // Build a link id for a profile on the active device (default device 1).
+  // Target the device that matches the DISPLAYED active phone, so call/voice/
+  // media commands always go to the phone the user sees. With two phones
+  // connected activeDev_ can lag behind st_.activeDeviceMac; resolve via the
+  // mac to keep them consistent.
   std::string link(int profile) const {
     int dev = activeDev_ > 0 ? activeDev_ : 1;
+    if (!st_.activeDeviceMac.empty())
+      for (const auto& kv : mediaDev_)
+        if (macEq(kv.second, st_.activeDeviceMac)) { dev = kv.first; break; }
     std::string s; s.push_back(hexc(dev)); s.push_back(hexc(profile)); return s;
   }
   // MAC of the current active device (for OPEN/PB_PULL).
@@ -413,7 +420,7 @@ private:
     if (has(l, "CALL_ACTIVE")) { st_.call = CallState::Active; st_.scoOpen = true; ch = true; }
     if (has(l, "SCO_OPEN")) { st_.scoOpen = true; if (st_.call == CallState::Incoming) st_.call = CallState::Active; ch = true; }
     if (has(l, "SCO_CLOSE")) { st_.scoOpen = false; ch = true; }
-    if (has(l, "CALL_END") || has(l, "CALL_IDLE")) { st_.call = CallState::Idle; st_.scoOpen = false; ch = true; }
+    if (has(l, "CALL_END") || has(l, "CALL_IDLE")) { st_.call = CallState::Idle; st_.scoOpen = false; st_.callerNumber.clear(); st_.callerName.clear(); ch = true; }
     if (has(l, "CALLER_NUMBER")) { st_.callerNumber = t.size() >= 3 ? t[2] : afterKey(l, "CALLER_NUMBER"); ch = true; }
     if (ch) changed();
   }
