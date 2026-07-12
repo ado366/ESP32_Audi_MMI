@@ -704,9 +704,11 @@ void App::renderDiag() {
     std::string l1, l2; topGaugeLines(l1, l2);       // now-playing / radio, top third
     if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
     if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str());
-    auto bmp = SpeedoRenderer::render(spd, 64, 34);
-    display_.drawBitmap(0, 30, 64, 34, bmp.data());
-    display_.drawText(44, 68, kFontCompressedLeft, "KM/H");
+    // Small digit bitmap (car-proven size): a bigger one takes too long to send and
+    // starves the keepalive when speed changes fast -> cluster freezes.
+    auto bmp = SpeedoRenderer::render(spd, 64, 20);
+    display_.drawBitmap(0, 38, 64, 20, bmp.data());
+    display_.drawText(44, 66, kFontCompressedLeft, "KM/H");
     return;
   }
 
