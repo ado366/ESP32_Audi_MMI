@@ -58,6 +58,10 @@ void test_lminus_rplus_chord_changes_radio_source() {
   TEST_ASSERT_EQUAL(Action::RadioSource, InputRouter::resolve(Control::SteerLMinusRPlus, Context::NowPlaying));
 }
 
+void test_right_plus_hold_triggers_voice_assistant() {
+  TEST_ASSERT_EQUAL(Action::VoiceDial, InputRouter::resolve(Control::SteerRightPlusHold, Context::NowPlaying));
+}
+
 void test_encoder_longpress_opens_menu_from_idle() {
   // Encoder-only menu entry so calibration is reachable without analog buttons.
   TEST_ASSERT_EQUAL(Action::MenuOpenClose, InputRouter::resolve(Control::EncoderHold, Context::NowPlaying));
@@ -78,6 +82,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_encoder_rotate_changes_song_on_now_playing);
   RUN_TEST(test_lminus_rplus_chord_changes_radio_source);
+  RUN_TEST(test_right_plus_hold_triggers_voice_assistant);
   RUN_TEST(test_left_steering_is_volume_everywhere);
   RUN_TEST(test_right_steering_changes_tracks_when_idle);
   RUN_TEST(test_right_steering_controls_calls);

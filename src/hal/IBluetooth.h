@@ -52,6 +52,7 @@ public:
   virtual void callReject() = 0;
   virtual void callEnd() = 0;
   virtual void dial(const std::string& number) = 0;
+  virtual void voiceDial() {}   // trigger the phone's voice assistant over HFP (hands-free)
 
   // Single-active-device management
   virtual void connectDevice(const std::string& mac) = 0; // disconnects others

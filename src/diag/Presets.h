@@ -40,19 +40,26 @@ public:
 
   // Binary (de)serialization to a storage blob. Same-build layout only.
   // If nothing is stored, any already-loaded defaults are left intact.
+  // Header: magic 'G', sizeof(Preset) (a layout guard), count. Any change to the
+  // Preset struct changes its size and cleanly invalidates old data across an OTA
+  // update instead of silently misparsing it (favourites are then re-seeded).
   void load(const IStorage& s) {
     std::string blob;
-    if (!s.readBlob("diag.presets", blob) || blob.empty()) return;
-    presets_.clear();
-    uint8_t n = static_cast<uint8_t>(blob[0]);
-    size_t need = 1 + static_cast<size_t>(n) * sizeof(Preset);
+    if (!s.readBlob("diag.presets", blob) || blob.size() < 3) return;
+    if (static_cast<uint8_t>(blob[0]) != 'G' ||
+        static_cast<uint8_t>(blob[1]) != static_cast<uint8_t>(sizeof(Preset) & 0xFF)) return;
+    uint8_t n = static_cast<uint8_t>(blob[2]);
+    size_t need = 3 + static_cast<size_t>(n) * sizeof(Preset);
     if (blob.size() < need) return;
+    presets_.clear();
     presets_.resize(n);
     for (uint8_t i = 0; i < n; ++i)
-      std::memcpy(&presets_[i], blob.data() + 1 + i * sizeof(Preset), sizeof(Preset));
+      std::memcpy(&presets_[i], blob.data() + 3 + i * sizeof(Preset), sizeof(Preset));
   }
   void save(IStorage& s) const {
     std::string blob;
+    blob.push_back('G');
+    blob.push_back(static_cast<char>(sizeof(Preset) & 0xFF));
     blob.push_back(static_cast<char>(presets_.size()));
     for (const auto& p : presets_)
       blob.append(reinterpret_cast<const char*>(&p), sizeof(Preset));

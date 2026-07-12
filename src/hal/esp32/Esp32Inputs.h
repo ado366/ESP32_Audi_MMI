@@ -63,7 +63,17 @@ public:
     b1_->update(); b2_->update(); sw_->update();
     for (int i = 0; i < 5; ++i) if (b1_->onPress(i) && k1_[i] != Control::None) push(k1_[i]);
     for (int i = 0; i < 5; ++i) if (b2_->onPress(i) && k2_[i] != Control::None) push(k2_[i]);
-    for (int i = 0; i < 8; ++i) if (sw_->onPress(i) && ks_[i] != Control::None) push(ks_[i]);
+    for (int i = 0; i < 8; ++i) {
+      if (ks_[i] == Control::None) continue;
+      // Right+ distinguishes a tap (next track) from a hold (voice assistant);
+      // so it fires on RELEASE for a tap, and once when held past the threshold.
+      if (ks_[i] == Control::SteerRightPlus) {
+        if (sw_->onPressAfter(i, kSteerHoldMs))        push(Control::SteerRightPlusHold);
+        else if (sw_->onReleaseBefore(i, kSteerHoldMs)) push(Control::SteerRightPlus);
+      } else if (sw_->onPress(i)) {
+        push(ks_[i]);
+      }
+    }
   }
 
   bool poll(InputEvent& out) override {
@@ -199,6 +209,7 @@ public:
 
 private:
   static constexpr uint32_t kHoldMs = 3000;     // runtime long-press -> open menu
+  static constexpr uint32_t kSteerHoldMs = 600; // steering Right+ hold -> voice assistant
   static constexpr uint32_t kBootHoldMs = 700;  // sustained hold at boot -> calibration
   int v1_[5], v2_[5], vs_[8];
   Control k1_[5], k2_[5], ks_[8];

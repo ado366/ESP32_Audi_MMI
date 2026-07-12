@@ -23,7 +23,7 @@ void test_descend_and_back() {
   MenuSystem m(menuRoot());
   m.select();                 // into PHONE
   TEST_ASSERT_FALSE(m.atRoot());
-  TEST_ASSERT_EQUAL_STRING("PHONEBOOK", m.current().label);
+  TEST_ASSERT_EQUAL_STRING("CONTACTS", m.current().label);
   m.back();                   // back to root
   TEST_ASSERT_TRUE(m.atRoot());
   TEST_ASSERT_EQUAL_STRING("PHONE", m.current().label);

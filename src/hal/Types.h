@@ -18,6 +18,8 @@ enum class Control : uint8_t {
   SteerLeftPlus, SteerLeftMinus, SteerRightPlus, SteerRightMinus,
   // Steering chords
   SteerLPlusRPlus, SteerLPlusRMinus, SteerLMinusRPlus, SteerLMinusRMinus,
+  // Steering long-press (held) variants
+  SteerRightPlusHold,
 };
 
 // What is on screen right now — selects which binding applies.
@@ -38,6 +40,7 @@ enum class Action : uint8_t {
   TrackNext, TrackPrev,
   PlayPause,
   RadioSource,           // change the OEM radio's band/source (mode)
+  VoiceDial,             // trigger the phone's voice assistant (hands-free)
   // Menu navigation
   MenuOpenClose, ScrollUp, ScrollDown, Select, Back, RootBack,
   // Call control

@@ -29,6 +29,8 @@ public:
   void callReject() override { status_.call = CallState::Idle; status_.scoOpen = false; changed(); }
   void callEnd() override    { status_.call = CallState::Idle; status_.scoOpen = false; changed(); }
   void dial(const std::string& number) override { status_.call = CallState::Outgoing; status_.callerNumber = number; changed(); }
+  void voiceDial() override { voiceTriggered_ = true; }   // stub: record for tests/UI
+  bool voiceTriggered_ = false;
 
   void connectDevice(const std::string& mac) override {
     // Enforce single active link: any prior link is dropped.

@@ -62,6 +62,7 @@ Action InputRouter::resolve(Control c, Context ctx) {
     case Control::SteerRightMinus: return Action::TrackPrev;
     case Control::EncoderCW:       return Action::TrackNext;  // rotate = next song on Now-Playing
     case Control::EncoderCCW:      return Action::TrackPrev;  // rotate = previous song
+    case Control::SteerRightPlusHold: return Action::VoiceDial;   // hold Right+ = voice assistant
     case Control::EncoderClick:    return Action::PlayPause;
     // Long-press opens the menu. This is the encoder-ONLY entry path, so the
     // menu (and Debug -> Calibrate) is reachable even when the analog buttons

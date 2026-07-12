@@ -97,6 +97,7 @@ public:
   void callAnswer() override { sendCommand("CALL " + link(HFP) + " ANSWER"); }
   void callReject() override { sendCommand("CALL " + link(HFP) + " REJECT"); }
   void callEnd()    override { sendCommand("CALL " + link(HFP) + " END"); }
+  void voiceDial() override { sendCommand("TOGGLE_VR " + link(HFP)); }   // start the phone's voice assistant
   void dial(const std::string& number) override {
     // Melody: outgoing call is "CALL <link> OUTGOING <number>" (the OUTGOING
     // action keyword is required; without it the module reads the number as the

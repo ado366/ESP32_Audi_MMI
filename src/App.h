@@ -64,7 +64,8 @@ private:
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
   void mediaStep(int dir);       // next/prev: BT track, tuner seek, or phone switch by source
-  void cycleGauge();             // Traffic: one-touch cycle Speedo -> Turbo -> Favourites -> home
+  void cycleGauge();             // Traffic: one-touch ring Speedo -> Turbo -> Favourites
+  Screen lastGauge_ = Screen::Speedo;   // remembered so Traffic from home resumes your preferred gauge
   void seedDefaultGauges();      // seed useful favourites on first boot (so gauges work out-of-box)
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
   void adaptAdjust(int dir);       // change the selected Adaptation timing field
@@ -133,6 +134,16 @@ private:
   // Auto-return to Now-Playing after inactivity in a menu / transient screen.
   uint32_t lastInputMs_ = 0;
   static constexpr uint32_t kHomeTimeoutMs = 20000;
+  // Boot splash.
+  uint32_t bootMs_ = 0;
+  bool     splashDrawn_ = false;
+  static constexpr uint32_t kSplashMs = 1600;
+  void renderSplash();
+  // Auto-switch the head unit to our aux/CD source when music starts playing.
+  bool     prevPlaying_ = false;
+  bool     wantAux_ = false;
+  int      auxAttempts_ = 0;
+  uint32_t auxNextMs_ = 0;
   void renderCall();
   std::string callParty() const;   // best name/number to show for the current call
   void dialParty(const std::string& name, const std::string& number);  // dial + remember who

@@ -31,7 +31,11 @@ void App::begin() {
   bt_.begin();
   btMgr_.begin();
   presets_.load(storage_);
-  if (storage_.getInt("diag.seeded", 0) == 0) seedDefaultGauges();  // first-boot gauges
+  // Seed on first boot, or if the preset layout changed across an update (old
+  // data was rejected -> presets empty). A user who deletes all favourites keeps
+  // them empty (the flag matches the current layout).
+  if (presets_.size() == 0 && storage_.getInt("diag.seeded", 0) != static_cast<int>(sizeof(Preset)))
+    seedDefaultGauges();
   oneDevice_ = storage_.getInt("bt.single", 0) != 0;  // default OFF
   bt_.setSingleDevice(oneDevice_);
   adaptInit_  = storage_.getInt("kwp.init",  200);    // per-vehicle KWP timing
@@ -99,20 +103,22 @@ void App::dialParty(const std::string& name, const std::string& number) {
   bt_.dial(number);
 }
 
-// Traffic button = one-touch cycle through the driving gauges, so you never have
-// to dive into menus while moving: Now-Playing -> Speedo -> Turbo -> Favourites
-// -> Now-Playing. Favourites is skipped if the user has none.
+// Traffic button = one-touch ring through the driving gauges, so you never have
+// to dive into menus while moving: Speedo -> Turbo -> Favourites -> Speedo.
+// From Now-Playing it resumes your last-viewed gauge (remembered). Back or the
+// Nav button returns to Now-Playing.
 void App::cycleGauge() {
   menuOpen_ = false;
+  Screen next;
   switch (screen_) {
-    case Screen::Speedo:    readGroup_ = 11; openScreen(Screen::DiagBoost); break;
-    case Screen::DiagBoost:
-      if (presets_.size() > 0) openScreen(Screen::DiagFavourites);
-      else                     screen_ = Screen::None;
-      break;
-    case Screen::DiagFavourites: screen_ = Screen::None; break;   // full circle -> home
-    default:                     openScreen(Screen::Speedo); break;
+    case Screen::Speedo:         next = Screen::DiagBoost; break;
+    case Screen::DiagBoost:      next = presets_.size() > 0 ? Screen::DiagFavourites : Screen::Speedo; break;
+    case Screen::DiagFavourites: next = Screen::Speedo; break;
+    default:                     next = lastGauge_; break;   // from home: resume preferred gauge
   }
+  if (next == Screen::DiagBoost) readGroup_ = 11;
+  openScreen(next);
+  lastGauge_ = next;
   dirty_ = true;
 }
 
@@ -132,7 +138,7 @@ void App::seedDefaultGauges() {
     add(ecu::Engine,   11, 0, View::Boost,     0,  2.5f, "BOOST");
     presets_.save(storage_);
   }
-  storage_.putInt("diag.seeded", 1); storage_.commit();
+  storage_.putInt("diag.seeded", static_cast<int>(sizeof(Preset))); storage_.commit();
 }
 
 // Best label to show for the current call: resolved contact name > caller number
@@ -173,8 +179,31 @@ bool App::isDiagScreen() const {
 
 void App::tick(uint32_t nowMs) {
   now_ = nowMs;
+  if (bootMs_ == 0) bootMs_ = now_;
   bt_.poll();
   if (radio_) { radio_->poll(); if (radio_->consumeChanged()) dirty_ = true; }
+
+  // Boot splash for the first moment after power-up (skipped once a call arrives).
+  if (now_ - bootMs_ < kSplashMs && bt_.status().call == CallState::Idle && !inputs_.calibrating()) {
+    if (!splashDrawn_) { renderSplash(); splashDrawn_ = true; }
+    return;
+  }
+
+  // Auto-switch the head unit to our aux/CD source when music starts playing, so
+  // Bluetooth audio is actually audible without manually selecting CD. We can
+  // only cycle the source (no direct "select CD"), so bound the attempts and
+  // stop as soon as the radio reports CD mode.
+  {
+    bool playing = bt_.status().playing;
+    if (playing && !prevPlaying_ && radio_ && radio_->hasRemote() && !radio_->cdMode()) {
+      wantAux_ = true; auxAttempts_ = 0; auxNextMs_ = now_;
+    }
+    prevPlaying_ = playing;
+    if (wantAux_) {
+      if (!radio_ || radio_->cdMode() || auxAttempts_ >= 4) wantAux_ = false;   // reached CD or gave up
+      else if (now_ >= auxNextMs_) { radio_->sourceMode(); auxAttempts_++; auxNextMs_ = now_ + 1500; }
+    }
+  }
 
   // Keep the phonebook (browse list + caller-ID) mirrored from the PBAP download
   // as contacts stream in. Cheap size check; rebuild only when it changes.
@@ -327,6 +356,7 @@ void App::handle(Action a) {
     case Action::TrackNext:  mediaStep(+1); break;
     case Action::TrackPrev:  mediaStep(-1); break;
     case Action::RadioSource: if (radio_ && radio_->hasRemote()) radio_->sourceMode(); break;
+    case Action::VoiceDial:  bt_.voiceDial(); dirty_ = true; break;
     case Action::PlayPause:  bt_.playPause();  break;
     case Action::CallAnswer: bt_.callAnswer(); dirty_ = true; break;
     case Action::CallReject: bt_.callReject(); dirty_ = true; break;
@@ -982,6 +1012,10 @@ void App::renderScreen() {
   int start = listIndex_ - visible / 2;
   if (start < 0) start = 0;
   if (start > n - visible) start = n - visible < 0 ? 0 : n - visible;
+  if (n > visible) {   // position indicator (e.g. "12/347") so long lists don't feel bottomless
+    char pos[12]; std::snprintf(pos, sizeof(pos), "%d/%d", listIndex_ + 1, n);
+    display_.drawText(38, 8, kFontCompressedLeft, pos);
+  }
   for (int row = 0; row < visible && start + row < n; ++row) {
     int i = start + row;
     char line[24];
@@ -1004,6 +1038,14 @@ void App::renderScreen() {
     display_.drawText(0, static_cast<uint8_t>(16 + row * 8),
                       i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, line);
   }
+}
+
+void App::renderSplash() {
+  char l[24];
+  display_.beginFullScreen(true);
+  display_.drawText(0, 24, kFontCentered, "AUDI MMI");
+  std::snprintf(l, sizeof(l), "V%s", cfg::FW_VERSION);
+  display_.drawText(0, 48, kFontCompressedCenter, l);
 }
 
 void App::renderCalibrate() {

@@ -8,17 +8,17 @@ namespace mmi {
 
 // PHONE: the functions a user operates while driving.
 static const MenuItem kPhone[] = {
-  LEAF("PHONEBOOK",  BtPhonebook),
+  LEAF("CONTACTS",   BtPhonebook),
   LEAF("RECENT",     BtRecentCalls),
-  LEAF("SWITCH DEV", BtSwitchDevice),
-  LEAF("ACTIVE DEV", BtActiveDevice),
+  LEAF("SWITCH PHONE",BtSwitchDevice),
+  LEAF("ACTIVE PHONE",BtActiveDevice),
   LEAF("CALLS",      BtCalls),
 };
 
-// BLUETOOTH: setup / developer items, done once, not while driving.
+// PAIRING: setup / developer items, done once, not while driving (under Advanced).
 static const MenuItem kBluetooth[] = {
-  LEAF("ONE DEVICE", BtSingleDevice),
-  LEAF("PAIR NEW",   BtPair),
+  LEAF("SINGLE PHONE",BtSingleDevice),
+  LEAF("ADD PHONE",  BtPair),
   LEAF("RESET BC127",BtReset),
   LEAF("BC127 SET",  BtSettings),
   // Hidden (unbuilt, low value): AUTOCONNECT (BtAutoConnect).
@@ -60,14 +60,20 @@ static const MenuItem kSettings[] = {
 
 #define SUBMENU(lbl, arr) MenuItem{ lbl, arr, static_cast<uint8_t>(sizeof(arr)/sizeof(arr[0])), MenuId::None }
 
-static const MenuItem kMain[] = {
-  SUBMENU("PHONE",      kPhone),      // user-facing drive-time functions
-  SUBMENU("DIAGNOSTIC", kDiagnostics),
-  SUBMENU("BLUETOOTH",  kBluetooth),  // setup / developer
+// ADVANCED: setup / developer items pulled off the top level so the everyday
+// menu stays short and unintimidating for newcomers.
+static const MenuItem kAdvanced[] = {
+  SUBMENU("PAIRING",    kBluetooth),
   SUBMENU("ADAPTATION", kAdaptation),
   SUBMENU("DEBUG",      kDebug),
+  LEAF("ECU INFO",      EcuInfo),
+};
+
+static const MenuItem kMain[] = {
+  SUBMENU("PHONE",      kPhone),        // calling / contacts
+  SUBMENU("DIAGNOSTIC", kDiagnostics),  // gauges + live values + faults
   SUBMENU("SETTINGS",   kSettings),
-  LEAF("ECU INFO", EcuInfo),
+  SUBMENU("ADVANCED",   kAdvanced),     // pairing / timing / debug — one level down
   LEAF("EXIT",     Exit),
 };
 
