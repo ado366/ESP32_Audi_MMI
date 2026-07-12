@@ -69,6 +69,7 @@ inline std::string webBtJson(const BtStatus& s) {
   std::string j = "{\"linked\":"; j += s.linked ? "true" : "false";
   j += ",\"device\":\"" + webJsonEsc(s.activeDeviceName) + "\"";
   j += ",\"playing\":"; j += s.playing ? "true" : "false";
+  j += ",\"title\":\"" + webJsonEsc(s.title) + "\",\"artist\":\"" + webJsonEsc(s.artist) + "\"";
   j += ",\"call\":\""; j += call(s.call); j += "\"";
   j += ",\"caller\":\"" + webJsonEsc(s.callerNumber) + "\",\"callerName\":\"" + webJsonEsc(s.callerName) + "\"}";
   return j;

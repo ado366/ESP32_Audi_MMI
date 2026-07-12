@@ -49,6 +49,15 @@ public:
     // yet. Just give up quietly if the link never comes / the download stalls.
     // A full pull of hundreds of contacts takes tens of seconds, so time out on
     // INACTIVITY (stream stopped), not total duration.
+    // If we're linked to a media device but have no track metadata (e.g. the phone
+    // connected already paused, so no AVRCP_MEDIA was pushed), actively request it.
+    // Throttled; stops as soon as title/artist populate.
+    if (st_.linked && !mediaDev_.empty() && st_.title.empty() && st_.artist.empty() &&
+        now - lastMetaReq_ > 4000) {
+      lastMetaReq_ = now;
+      sendCommand("AVRCP_META_DATA " + link(AVRCP));
+    }
+
     if (pbapPullQueued_ && now - pbapStart_ > 8000)  { pbapPullQueued_ = false; pbapPulling_ = false; }
     if (pbapPulling_ && (now - pbapLastRx_ > 5000 || now - pbapStart_ > 90000)) pbapPulling_ = false;
 
@@ -463,6 +472,7 @@ private:
   bool scanning_ = false;                // inside a STATUS response
   bool singleDevice_ = false;
   uint32_t lastStatusPoll_ = 0;
+  uint32_t lastMetaReq_ = 0;             // throttle for AVRCP metadata re-request
   // PBAP phonebook download state
   Phonebook book_;                       // displayed contacts (from cache or last good pull)
   Phonebook pullTmp_;                    // in-progress contacts pull (swaps into book_ on OK)

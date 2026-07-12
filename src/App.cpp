@@ -111,7 +111,9 @@ void App::topGaugeLines(std::string& l1, std::string& l2) const {
   const BtStatus& st = bt_.status();
   if (radio_ && !radio_->cdMode() && (radio_->line1()[0] || radio_->line2()[0])) {
     l1 = radio_->line1(); l2 = radio_->line2();
-  } else if (st.playing && !st.title.empty()) {
+  } else if (!st.title.empty() || !st.artist.empty()) {
+    // AVRCP track metadata — show whether the phone is PLAYING or PAUSED (the
+    // BC127 keeps the last track's title/artist until the source device changes).
     l1 = st.title; l2 = st.artist;
   } else {
     l1 = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName) : "NO PHONE"; l2.clear();
