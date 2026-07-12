@@ -8,8 +8,8 @@ namespace mmi {
 
 // PHONE: the functions a user operates while driving.
 static const MenuItem kPhone[] = {
-  LEAF("CONTACTS",   BtPhonebook),
   LEAF("RECENT",     BtRecentCalls),
+  LEAF("CONTACTS",   BtPhonebook),
   LEAF("SWITCH PHONE",BtSwitchDevice),
   LEAF("ACTIVE PHONE",BtActiveDevice),
   LEAF("CALLS",      BtCalls),
