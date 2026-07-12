@@ -116,8 +116,8 @@ void App::topGaugeLines(std::string& l1, std::string& l2) const {
   } else {
     l1 = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName) : "NO PHONE"; l2.clear();
   }
-  if (l1.size() > 10) l1 = l1.substr(0, 10);
-  if (l2.size() > 10) l2 = l2.substr(0, 10);
+  // Return full strings; the caller marquees them (each line scrolls in its own
+  // text strip, which the display diff redraws without touching the gauge below).
 }
 
 // Traffic button = one-touch ring through the driving gauges, so you never have
@@ -702,6 +702,7 @@ void App::renderDiag() {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
     std::string l1, l2; topGaugeLines(l1, l2);       // now-playing / radio, top third
+    l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
     if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
     if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str());
     // Small digit bitmap (car-proven size): a bigger one takes too long to send and
@@ -789,6 +790,7 @@ void App::renderDiag() {
     // symbol on the LEFT with a rising histogram beside it, dark elsewhere.
     display_.beginFullScreen(true);
     { std::string l1, l2; topGaugeLines(l1, l2);
+      l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
       if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
       if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str()); }
 
