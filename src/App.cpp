@@ -821,7 +821,7 @@ void App::renderDiag() {
     display_.drawBitmap(0, 24, 64, 64, gauge.data());    // y24..87: tallest bar reaches the top, no bottom gap
     // Boost + duty readout OVERLAID near the top, CENTERED. Clears 56px (x0..55) so
     // only the tallest right-edge bar (x61..63) keeps rising past it, unwiped.
-    display_.drawTextOverlay(0, 25, kFontCompressedCenter, 56, valStr.c_str());
+    display_.drawTextOverlay(0, 24, kFontCompressedCenter, 56, valStr.c_str());
     return;
   }
 

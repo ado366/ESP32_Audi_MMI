@@ -63,29 +63,33 @@ public:
 private:
   template <typename F>
   static void drawWheel(F setPx, int cx, int cy, int R, int hub) {
-    // Round housing (two-pixel ring so it stands out against the bars).
+    constexpr float PI = 3.14159265f;
+    const int blades = 6;
+    const float step = 2.f * PI / blades;
+    const float curve = 0.95f;        // blade sweep hub->rim (the swirl = turbo signature)
+    // Housing ring (2px so it reads as a casing, not a hairline).
     for (int a = 0; a < 360; ++a) {
-      float rad = a * 3.14159265f / 180.f;
-      setPx(cx + (int)std::lround(R * std::cos(rad)),       cy + (int)std::lround(R * std::sin(rad)));
-      setPx(cx + (int)std::lround((R - 1) * std::cos(rad)), cy + (int)std::lround((R - 1) * std::sin(rad)));
+      float r = a * PI / 180.f;
+      setPx(cx + (int)std::lround(R * std::cos(r)),       cy + (int)std::lround(R * std::sin(r)));
+      setPx(cx + (int)std::lround((R - 1) * std::cos(r)), cy + (int)std::lround((R - 1) * std::sin(r)));
     }
-    // Filled centre hub.
+    // Six distinct curved blades (2px thick, clear gaps between) sweeping from the
+    // hub out to the rim — the comma/hook curve is what reads as a compressor wheel.
+    for (int b = 0; b < blades; ++b) {
+      float base = b * step;
+      for (int rr = hub + 1; rr <= R - 2; ++rr) {
+        float f = static_cast<float>(rr - hub - 1) / (R - 2 - hub - 1);  // 0 hub .. 1 rim
+        float ang = base + curve * f;
+        for (float da = 0.f; da <= 0.16f; da += 0.16f) {                 // 2px thickness
+          setPx(cx + (int)std::lround(rr * std::cos(ang + da)),
+                cy + (int)std::lround(rr * std::sin(ang + da)));
+        }
+      }
+    }
+    // Filled centre hub (the shaft boss).
     for (int y = -hub; y <= hub; ++y)
       for (int x = -hub; x <= hub; ++x)
         if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
-    // Curved impeller blades sweeping out from the hub to the rim — the swirl is
-    // what makes it read as a compressor wheel rather than a plain disc/snail.
-    const int blades = 8;
-    const float curve = 1.15f;                              // radians of sweep, hub->rim
-    for (int b = 0; b < blades; ++b) {
-      float base = b * (2.f * 3.14159265f / blades);
-      for (int rr = hub; rr <= R - 2; ++rr) {
-        float f = static_cast<float>(rr - hub) / (R - 2 - hub);  // 0 at hub, 1 at rim
-        float ang = base + curve * f;
-        setPx(cx + (int)std::lround(rr * std::cos(ang)),
-              cy + (int)std::lround(rr * std::sin(ang)));
-      }
-    }
   }
 };
 
