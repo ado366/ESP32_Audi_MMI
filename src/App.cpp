@@ -823,10 +823,12 @@ void App::renderDiag() {
     float frac = mx > 0 ? bar / mx : 0.f;
     // Spin the compressor wheel while boost is above 1 bar (3 blade positions).
     int spin = bar > 1.0f ? static_cast<int>((now_ / 150u) % 3u) : 0;
-    // Boost + duty readout, then the composite turbo gauge: compressor-wheel symbol
-    // top-left with a full-width rising histogram; tallest bar level with the wheel.
-    auto gauge = TurboGauge::render(frac, 64, 64, 16, spin);   // 16 uniform 3px bars; 64px tall
-    display_.drawBitmap(0, 24, 64, 64, gauge.data());    // y24..87: tallest bar reaches the top, no bottom gap
+    // Draw the gauge as three small NON-overlapping bitmaps so animation only
+    // redraws the one that changed: compressor sprite (spin), and the bars split
+    // into tall-right + short-left (boost). See TurboGauge.h.
+    { auto comp = TurboGauge::compressor(spin);   display_.drawBitmap(0, 33, 40, 34, comp.data()); }
+    { auto br   = TurboGauge::barsRight(frac);     display_.drawBitmap(40, 24, 24, 64, br.data()); }
+    { auto bl   = TurboGauge::barsLeft(frac);      display_.drawBitmap(0, 67, 40, 21, bl.data()); }
     // Boost + duty readout OVERLAID near the top, CENTERED. Clears 56px (x0..55) so
     // only the tallest right-edge bar (x61..63) keeps rising past it, unwiped.
     display_.drawTextOverlay(0, 24, kFontCompressedCenter, 56, valStr.c_str());

@@ -1,12 +1,14 @@
-// TurboGauge.h — the full-screen turbo gauge graphic (Boost view).
-// One 1bpp bitmap composites two things so they can't fight over pixels:
-//   * a rising histogram that spans the FULL width, lit left->right to `frac`;
-//     the tallest (rightmost) bar reaches the very top of the bitmap.
-//   * a turbocharger compressor-wheel symbol in the TOP-LEFT (curved impeller
-//     blades in a round housing) — reads as a turbo, not a snail. Its top sits
-//     at the top of the bitmap, i.e. level with the tallest bar.
-// The short left-hand bars stay below the wheel, so they don't collide. Bit
-// order matches IDisplay::drawBitmap and the real FIS: bit = y*w + x, MSB-first.
+// TurboGauge.h — the turbo gauge graphic (Boost view), split into SMALL, NON-
+// overlapping 1bpp bitmaps so the screen can animate without a slow full redraw:
+//   * compressor(spin) — the compressor symbol (40x34), redraws only when the
+//     wheel spins.
+//   * barsRight(frac)/barsLeft(frac) — the rising histogram split into the tall
+//     right columns (24x64) and the short left columns (40x21), redraw only when
+//     the boost level changes.
+// Because the three rectangles don't overlap, the frame differ redraws just the
+// one that changed (~85..190 bytes) instead of the whole 64x64 (~500 bytes).
+// The full gauge sits at screen y24..87: compressor at (0,33), left bars at
+// (0,67), right bars at (40,24). Bit order = y*w + x, MSB-first.
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -16,50 +18,62 @@ namespace mmi {
 
 class TurboGauge {
 public:
-  static std::vector<uint8_t> render(float frac, uint8_t w, uint8_t h, int bars = 16, int spin = 0) {
-    std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
-    if (w < 8 || h < 8 || bars < 1) return bmp;
-    if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+  static constexpr int kBars = 16;
+
+  // Compressor symbol sprite, drawn at screen (0,33). `spin` (0..2) rotates the blades.
+  static std::vector<uint8_t> compressor(int spin) {
+    const int W = 40, H = 34;
+    std::vector<uint8_t> bmp((W * H + 7) / 8, 0);
     auto setPx = [&](int x, int y) {
-      if (x < 0 || x >= w || y < 0 || y >= h) return;
-      size_t bit = static_cast<size_t>(y) * w + x;
+      if (x < 0 || x >= W || y < 0 || y >= H) return;
+      size_t bit = static_cast<size_t>(y) * W + x;
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
+    drawCompressor(setPx, 16, 19, 11, spin);   // cy=19 local == old gauge row 28
+    return bmp;
+  }
+  // Tall bars 10..15 into a 24x64 bitmap drawn at screen (40,24).
+  static std::vector<uint8_t> barsRight(float frac) { return bars(frac, 40, 63, 24, 64); }
+  // Short bars 0..9 into a 40x21 bitmap drawn at screen (0,67) (the gauge's bottom band).
+  static std::vector<uint8_t> barsLeft(float frac)  { return bars(frac, 0, 39, 40, 21); }
 
-    // ---- rising histogram, full width, lit up to `frac` ----
-    // Uniform cell width (integer i*w/bars gave alternating 4/5px bars); pick `bars`
-    // that divides the width evenly (e.g. 16 into 64) for identical 3px bars + 1px gap.
-    int cellW = static_cast<int>(w) / bars; if (cellW < 2) cellW = 2;
-    int barW  = cellW - 1;                                 // 1px gap between bars
-    int lit = static_cast<int>(frac * bars + 0.5f);
-    for (int i = 0; i < bars; ++i) {
-      int x0 = i * cellW + 1;               // +1 so the LAST bar reaches the right edge while
-      int x1 = x0 + barW - 1;               // every bar keeps the same width (1px margin moves left)
-      // Power curve: heights accelerate toward the right (the last few bars grow
-      // fastest), so the gauge reads exponentially, not linearly. Floor at 6px so
-      // the shortest (hollow) bars still show ~4px of empty fillable space inside.
-      float t = static_cast<float>(i + 1) / bars;          // 0..1 left..right
-      int barH = 1 + static_cast<int>((h - 1) * std::pow(t, 2.4f) + 0.5f);
-      if (barH < 6) barH = 6;
-      if (barH > h) barH = h;
-      int y0 = h - barH;                                   // bar top
+private:
+  // Height (in the 64px-tall gauge) of bar i, shared by both bar bitmaps.
+  static int barH(int i) {
+    float t = static_cast<float>(i + 1) / kBars;
+    int h = 1 + static_cast<int>((64 - 1) * std::pow(t, 2.4f) + 0.5f);
+    if (h < 6)  h = 6;
+    if (h > 64) h = 64;
+    return h;
+  }
+  // Render the histogram bars whose full-gauge x falls in [fxlo,fxhi] into a WxH
+  // bitmap. The bitmap is the BOTTOM H rows of the gauge (its bottom row = gauge
+  // bottom), so a bar's top is at local row H-barH. Local x = full_x - fxlo.
+  static std::vector<uint8_t> bars(float frac, int fxlo, int fxhi, int W, int H) {
+    if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+    std::vector<uint8_t> bmp((static_cast<size_t>(W) * H + 7) / 8, 0);
+    auto setPx = [&](int x, int y) {
+      if (x < 0 || x >= W || y < 0 || y >= H) return;
+      size_t bit = static_cast<size_t>(y) * W + x;
+      bmp[bit >> 3] |= (0x80 >> (bit & 7));
+    };
+    const int cellW = 4, barW = 3;
+    int lit = static_cast<int>(frac * kBars + 0.5f);
+    for (int i = 0; i < kBars; ++i) {
+      int fx0 = i * cellW + 1, fx1 = fx0 + barW - 1;   // +1 so the last bar reaches the edge
+      if (fx0 < fxlo || fx1 > fxhi) continue;          // this bar isn't in this bitmap
+      int lx0 = fx0 - fxlo, lx1 = fx1 - fxlo;
+      int y0 = H - barH(i); if (y0 < 0) y0 = 0;        // bar top (bottom = gauge bottom)
       if (i < lit) {
-        for (int x = x0; x <= x1; ++x) for (int y = y0; y < h; ++y) setPx(x, y);
-      } else {                                             // hollow outline
-        for (int x = x0; x <= x1; ++x) { setPx(x, y0); setPx(x, h - 1); }
-        for (int y = y0; y < h; ++y) { setPx(x0, y); setPx(x1, y); }
+        for (int x = lx0; x <= lx1; ++x) for (int y = y0; y < H; ++y) setPx(x, y);
+      } else {                                         // hollow outline
+        for (int x = lx0; x <= lx1; ++x) { setPx(x, y0); setPx(x, H - 1); }
+        for (int y = y0; y < H; ++y) { setPx(lx0, y); setPx(lx1, y); }
       }
     }
-
-    // ---- turbocharger compressor, upper-left (top 1px below the readout) ----
-    // Bigger bladed wheel inside a THIN volute housing (hugging it, no gap) with a
-    // HORIZONTAL outlet duct + flange. `spin` rotates the blades (0..2) for animation.
-    const int Rw = 11, cx = 16, cy = 28;
-    drawCompressor(setPx, cx, cy, Rw, spin);
     return bmp;
   }
 
-private:
   template <typename F>
   static void drawCompressor(F setPx, int cx, int cy, int Rw, int spin) {
     constexpr float PI = 3.14159265f, TWO = 2.f * PI;
