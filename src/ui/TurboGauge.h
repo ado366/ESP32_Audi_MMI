@@ -52,46 +52,61 @@ public:
     }
 
     // ---- turbocharger compressor, lower-left ----
-    // A FILLED volute (snail scroll) housing with a central hub and an outlet duct
-    // at the top-right — reads as a compressor, not "a wheel with blades".
-    const int Rmax = 12, cx = 14;
-    int cy = h - 22; if (cy < Rmax + 2) cy = Rmax + 2;
-    drawCompressor(setPx, cx, cy, Rmax);
+    // The bladed compressor WHEEL (2px housing ring + curved blades + hub) with a
+    // volute SCROLL wrapping around it (clear gap, thin tongue -> fat outlet) and an
+    // outlet duct + flange at the top-right.
+    const int Rw = 10, cx = 16;
+    int cy = h - 22; if (cy < Rw + 4) cy = Rw + 4;
+    drawCompressor(setPx, cx, cy, Rw);
     return bmp;
   }
 
 private:
-  // Filled turbocharger compressor: a volute scroll (radius grows with angle, so it
-  // spirals like a snail housing) around a hub, plus an outlet duct + flange off the
-  // fat end. Modelled on flat turbo logos rather than a plain bladed wheel.
   template <typename F>
-  static void drawCompressor(F setPx, int cx, int cy, int Rmax) {
+  static void drawCompressor(F setPx, int cx, int cy, int Rw) {
     constexpr float PI = 3.14159265f, TWO = 2.f * PI;
-    const float phase = -0.5f;        // orient the scroll opening / outlet up-right
-    const float da    = -0.35f;       // outlet duct direction (shallow up-right)
-    const int   Rmin  = (int)(Rmax * 0.44f);
-    const float hole  = Rmax * 0.34f; // central wheel window
-    auto wrap = [&](float a) { while (a < 0) a += TWO; while (a >= TWO) a -= TWO; return a; };
-    // filled volute scroll
-    for (int y = -Rmax; y <= Rmax; ++y)
-      for (int x = -Rmax; x <= Rmax; ++x) {
-        float r  = std::sqrt((float)(x * x + y * y));
-        float th = wrap(std::atan2((float)y, (float)x) - phase);
-        float Ro = Rmin + (Rmax - Rmin) * (th / TWO);      // spiral outer edge
-        if (r >= hole && r <= Ro) setPx(cx + x, cy + y);
+    const int hub = 3, blades = 6;
+    const float step = TWO / blades, curve = 0.95f;
+    const float Aend = -0.6f;          // scroll fat end / duct direction: top-right
+
+    // --- the wheel (the shape that reads well): 2px ring + 6 curved blades + hub ---
+    for (int a = 0; a < 360; ++a) {
+      float r = a * PI / 180.f;
+      setPx(cx + (int)std::lround(Rw * std::cos(r)),       cy + (int)std::lround(Rw * std::sin(r)));
+      setPx(cx + (int)std::lround((Rw - 1) * std::cos(r)), cy + (int)std::lround((Rw - 1) * std::sin(r)));
+    }
+    for (int b = 0; b < blades; ++b) {
+      float base = b * step;
+      for (int rr = hub + 1; rr <= Rw - 2; ++rr) {
+        float f = (float)(rr - hub - 1) / (Rw - 2 - hub - 1);
+        float ang = base + curve * f;
+        for (float da = 0.f; da <= 0.16f; da += 0.16f)
+          setPx(cx + (int)std::lround(rr * std::cos(ang + da)), cy + (int)std::lround(rr * std::sin(ang + da)));
       }
-    // hub boss (the shaft centre)
-    for (int y = -2; y <= 2; ++y)
-      for (int x = -2; x <= 2; ++x)
-        if (x * x + y * y <= 2) setPx(cx + x, cy + y);
-    // outlet duct: a distinct neck + a wider flange lip
-    const float ax = std::cos(da), ay = std::sin(da);
-    const float px = std::cos(da + PI / 2), py = std::sin(da + PI / 2);
-    for (int rr = Rmax - 3; rr <= Rmax + 6; ++rr)
-      for (float s = -2.f; s <= 2.f; s += 0.5f)
+    }
+    for (int y = -hub; y <= hub; ++y)
+      for (int x = -hub; x <= hub; ++x)
+        if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
+
+    // --- volute scroll wrapping the wheel: ~270 deg spiral OUTSIDE it (clear gap),
+    //     thin tongue growing to the fat outlet where the duct joins ---
+    const float sweep = 4.7f;
+    for (float t = 0.f; t <= 1.f; t += 0.006f) {
+      float ang = Aend - sweep * (1.f - t);
+      float rad = (Rw + 3.0f) + 2.5f * t;
+      int thick = t < 0.5f ? 2 : 3;
+      for (int w = 0; w < thick; ++w)
+        setPx(cx + (int)std::lround((rad + w) * std::cos(ang)), cy + (int)std::lround((rad + w) * std::sin(ang)));
+    }
+    // --- outlet duct + flange lip at the scroll's fat end (top-right) ---
+    const float ax = std::cos(Aend), ay = std::sin(Aend);
+    const float px = std::cos(Aend + PI / 2), py = std::sin(Aend + PI / 2);
+    const int b0 = Rw + 8;
+    for (int rr = b0 - 2; rr <= b0 + 5; ++rr)
+      for (float s = -2.5f; s <= 2.5f; s += 0.5f)
         setPx((int)std::lround(cx + rr * ax + s * px), (int)std::lround(cy + rr * ay + s * py));
-    for (int rr = Rmax + 6; rr <= Rmax + 8; ++rr)          // flange lip (wider)
-      for (float s = -3.5f; s <= 3.5f; s += 0.5f)
+    for (int rr = b0 + 5; rr <= b0 + 7; ++rr)              // flange lip (wider)
+      for (float s = -4.f; s <= 4.f; s += 0.5f)
         setPx((int)std::lround(cx + rr * ax + s * px), (int)std::lround(cy + rr * ay + s * py));
   }
 };
