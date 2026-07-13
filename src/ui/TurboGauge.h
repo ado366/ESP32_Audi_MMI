@@ -52,10 +52,9 @@ public:
     }
 
     // ---- turbocharger compressor wheel, lower-left ----
-    // cy = h-41 keeps the wheel at a fixed screen position (bottom ~= same row) as
-    // the gauge grows taller, so growing the bars doesn't drag the wheel around.
+    // cy = h-37 keeps the wheel at a fixed screen position as the gauge grows taller.
     const int R = 14, hub = 3, cx = 15;
-    int cy = h - 41; if (cy < R + 1) cy = R + 1;
+    int cy = h - 37; if (cy < R + 1) cy = R + 1;
     drawWheel(setPx, cx, cy, R, hub);
     return bmp;
   }
@@ -90,6 +89,28 @@ private:
     for (int y = -hub; y <= hub; ++y)
       for (int x = -hub; x <= hub; ++x)
         if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
+
+    // Compressor intake duct off the TOP-RIGHT: a short tube (two walls) ending in
+    // a flared intake mouth — this is what turns "a bladed wheel" into a recognisable
+    // turbocharger compressor.
+    const float dth = -0.58f;                         // aim up-and-right (top-right)
+    const float ax = std::cos(dth), ay = std::sin(dth);
+    const float px = std::cos(dth + PI / 2), py = std::sin(dth + PI / 2);  // perpendicular
+    const int len = R + 8;                            // how far the duct reaches out
+    for (int rr = R - 2; rr <= len; ++rr) {
+      float bx = cx + rr * ax, by = cy + rr * ay;     // tube centreline
+      float wall = 3.0f + (rr > len - 3 ? 1.3f * (rr - (len - 3)) : 0.f);   // flare the mouth
+      for (float t = 0.f; t <= 1.f; t += 0.5f) {      // 2px-thick walls (no gaps at the angle)
+        setPx((int)std::lround(bx + (wall - t) * px), (int)std::lround(by + (wall - t) * py));
+        setPx((int)std::lround(bx - (wall - t) * px), (int)std::lround(by - (wall - t) * py));
+      }
+    }
+    // Intake mouth (cap across the flared end).
+    {
+      float bx = cx + len * ax, by = cy + len * ay, wall = 4.3f;
+      for (float s = -wall; s <= wall; s += 0.5f)
+        setPx((int)std::lround(bx + s * px), (int)std::lround(by + s * py));
+    }
   }
 };
 
