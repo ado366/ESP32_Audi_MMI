@@ -54,14 +54,14 @@ public:
     // ---- turbocharger compressor, upper-left (top 1px below the readout) ----
     // Bigger bladed wheel inside a THIN volute housing (hugging it, no gap) with a
     // HORIZONTAL outlet duct + flange. `spin` rotates the blades (0..2) for animation.
-    const int Rw = 11, cx = 16, cy = Rw + 12;   // cy so the flange top lands at bitmap y9
-    drawCompressor(setPx, cx, cy, Rw, spin);
+    const int Rw = 11, cx = 16, cy = 28, topY = 9;  // wheel dropped below the fixed pipe/flange top
+    drawCompressor(setPx, cx, cy, Rw, topY, spin);
     return bmp;
   }
 
 private:
   template <typename F>
-  static void drawCompressor(F setPx, int cx, int cy, int Rw, int spin) {
+  static void drawCompressor(F setPx, int cx, int cy, int Rw, int topY, int spin) {
     constexpr float PI = 3.14159265f, TWO = 2.f * PI;
     const int hub = 3, blades = 8;
     const float step = TWO / blades, curve = 0.85f;
@@ -73,7 +73,7 @@ private:
       for (int x = -Rw - 6; x <= Rw + 6; ++x) {
         float r  = std::sqrt((float)(x * x + y * y));
         float th = wrap(std::atan2((float)y, (float)x) - phase);
-        float Ro = (Rw + 1.f) + 3.5f * (th / TWO);         // spiral shell (thin tongue -> fatter outlet)
+        float Ro = (Rw + 1.f) + 5.f * (th / TWO);          // pronounced spiral (thin tongue -> fat outlet)
         if (r >= Rw && r <= Ro) setPx(cx + x, cy + y);
       }
     // --- the wheel: 2px ring + 8 curved blades (rotated by `spin`) + hub ---
@@ -97,11 +97,11 @@ private:
         if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
 
     // --- HORIZONTAL outlet duct off the fat top, ending in a vertical flange lip ---
-    const int dyt = cy - Rw - 2, dyb = cy - Rw + 3;        // wider (6px) pipe
-    const int dxs = cx - 2, dxe = cx + Rw + 7;
+    const int dyt = topY + 1, dyb = topY + 6;             // 6px pipe at a FIXED top (flange = icon top)
+    const int dxs = cx - 2, dxe = cx + Rw + 5;            // shorter pipe
     for (int yy = dyt; yy <= dyb; ++yy)
       for (int xx = dxs; xx <= dxe; ++xx) setPx(xx, yy);   // pipe
-    for (int yy = dyt - 1; yy <= dyb + 1; ++yy)            // flange lip: only 1px wider top/bottom
+    for (int yy = topY; yy <= dyb + 1; ++yy)              // flange lip: only 1px wider top/bottom
       for (int xx = dxe; xx <= dxe + 2; ++xx) setPx(xx, yy);
   }
 };
