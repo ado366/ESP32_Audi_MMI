@@ -819,9 +819,9 @@ void App::renderDiag() {
     // top-left with a full-width rising histogram; tallest bar level with the wheel.
     auto gauge = TurboGauge::render(frac, 64, 64, 16);   // 16 uniform 3px bars; 64px tall
     display_.drawBitmap(0, 24, 64, 64, gauge.data());    // y24..87: tallest bar reaches the top, no bottom gap
-    // Boost + duty readout OVERLAID near the top, clearing only its own left width
-    // (48px) so the tall right-hand bars keep rising past it instead of being wiped.
-    display_.drawTextOverlay(0, 25, kFontCompressedLeft, 48, valStr.c_str());
+    // Boost + duty readout OVERLAID near the top, CENTERED. Clears 56px (x0..55) so
+    // only the tallest right-edge bar (x61..63) keeps rising past it, unwiped.
+    display_.drawTextOverlay(0, 25, kFontCompressedCenter, 56, valStr.c_str());
     return;
   }
 

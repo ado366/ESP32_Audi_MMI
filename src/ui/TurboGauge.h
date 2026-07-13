@@ -33,15 +33,14 @@ public:
     int barW  = cellW - 1;                                 // 1px gap between bars
     int lit = static_cast<int>(frac * bars + 0.5f);
     for (int i = 0; i < bars; ++i) {
-      int x0 = i * cellW;
-      int x1 = (i == bars - 1) ? (static_cast<int>(w) - 1)  // last bar reaches the right edge
-                               : x0 + barW - 1;
+      int x0 = i * cellW + 1;               // +1 so the LAST bar reaches the right edge while
+      int x1 = x0 + barW - 1;               // every bar keeps the same width (1px margin moves left)
       // Power curve: heights accelerate toward the right (the last few bars grow
-      // fastest), so the gauge reads exponentially, not linearly. Floor at 4px so
-      // even the shortest left bars have substance instead of collapsing to a line.
+      // fastest), so the gauge reads exponentially, not linearly. Floor at 6px so
+      // the shortest (hollow) bars still show ~4px of empty fillable space inside.
       float t = static_cast<float>(i + 1) / bars;          // 0..1 left..right
       int barH = 1 + static_cast<int>((h - 1) * std::pow(t, 2.4f) + 0.5f);
-      if (barH < 4) barH = 4;
+      if (barH < 6) barH = 6;
       if (barH > h) barH = h;
       int y0 = h - barH;                                   // bar top
       if (i < lit) {
