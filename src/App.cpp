@@ -107,19 +107,21 @@ void App::dialParty(const std::string& name, const std::string& number) {
 // (both lines) when the radio is the source, else the now-playing title + artist,
 // else the phone name. Not marquee'd, so it only redraws when it actually changes
 // — no per-tick FIS thrash. Drawn as graphics text (all one graphics-mode frame).
-void App::topGaugeLines(std::string& l1, std::string& l2) const {
+// The two lines shown on the top rows of the Now-Playing/home screen. Factored
+// out so the gauge screens (speedo/turbo) show the IDENTICAL content on top --
+// switching to a gauge keeps whatever home was showing. Returns RAW (un-marquee'd)
+// strings; each caller marquees to its own width. Mirrors render()'s home logic:
+// radio passthrough, else the AVRCP track when playing, else PLAYING/PAUSED + phone.
+void App::nowPlayingLines(std::string& l1, std::string& l2) const {
   const BtStatus& st = bt_.status();
   if (radio_ && !radio_->cdMode() && (radio_->line1()[0] || radio_->line2()[0])) {
     l1 = radio_->line1(); l2 = radio_->line2();
-  } else if (!st.title.empty() || !st.artist.empty()) {
-    // AVRCP track metadata — show whether the phone is PLAYING or PAUSED (the
-    // BC127 keeps the last track's title/artist until the source device changes).
+  } else if (st.playing && !st.title.empty()) {
     l1 = st.title; l2 = st.artist;
   } else {
-    l1 = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName) : "NO PHONE"; l2.clear();
+    l1 = st.playing ? "PLAYING" : "PAUSED";
+    l2 = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName) : "NO PHONE";
   }
-  // Return full strings; the caller marquees them (each line scrolls in its own
-  // text strip, which the display diff redraws without touching the gauge below).
 }
 
 // Traffic button = one-touch ring through the driving gauges, so you never have
@@ -703,7 +705,7 @@ void App::renderDiag() {
     } else {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
-    std::string l1, l2; topGaugeLines(l1, l2);       // now-playing / radio, top third
+    std::string l1, l2; nowPlayingLines(l1, l2);     // identical to home's top two rows
     l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
     if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
     if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str());
@@ -791,7 +793,7 @@ void App::renderDiag() {
     // Full-screen so WE own the whole display: now-playing on top (static), turbo
     // symbol on the LEFT with a rising histogram beside it, dark elsewhere.
     display_.beginFullScreen(true);
-    { std::string l1, l2; topGaugeLines(l1, l2);
+    { std::string l1, l2; nowPlayingLines(l1, l2);   // identical to home's top two rows
       l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
       if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
       if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str()); }
@@ -1122,22 +1124,10 @@ void App::render() {
   // no radio text. In that case (empty passthrough) fall through to the
   // Bluetooth screen instead of blanking the cluster; the next radio update
   // will lock onto the real source.
-  if (radio_ && !radio_->cdMode() && (radio_->line1()[0] || radio_->line2()[0])) {
-    scrolling_ = false;
-    display_.showTopLines(radio_->line1(), radio_->line2());
-    return;
-  }
-
-  if (st.playing && !st.title.empty()) {
-    scrolling_ = st.title.size() > kWin || st.artist.size() > kWin;
-    display_.showTopLines(marquee(st.title).c_str(), marquee(st.artist).c_str());
-  } else {
-    std::string dev = st.linked ? (st.activeDeviceName.empty() ? "PHONE" : st.activeDeviceName)
-                                : "NO PHONE";
-    scrolling_ = dev.size() > kWin;   // scroll long phone names
-    // Short lines (<8) are auto-centred by the FIS; keep PLAYING/PAUSED un-padded.
-    display_.showTopLines(st.playing ? "PLAYING" : "PAUSED", marquee(dev).c_str());
-  }
+  std::string l1, l2; nowPlayingLines(l1, l2);
+  scrolling_ = l1.size() > kWin || l2.size() > kWin;   // marquee long title/artist/phone
+  // Short lines (<8) are auto-centred by the FIS; marquee is a no-op on them.
+  display_.showTopLines(marquee(l1).c_str(), marquee(l2).c_str());
 }
 
 } // namespace mmi
