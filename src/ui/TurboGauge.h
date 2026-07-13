@@ -34,11 +34,14 @@ public:
     int lit = static_cast<int>(frac * bars + 0.5f);
     for (int i = 0; i < bars; ++i) {
       int x0 = i * cellW;
-      int x1 = x0 + barW - 1;
+      int x1 = (i == bars - 1) ? (static_cast<int>(w) - 1)  // last bar reaches the right edge
+                               : x0 + barW - 1;
       // Power curve: heights accelerate toward the right (the last few bars grow
-      // fastest), so the gauge reads exponentially, not linearly.
+      // fastest), so the gauge reads exponentially, not linearly. Floor at 4px so
+      // even the shortest left bars have substance instead of collapsing to a line.
       float t = static_cast<float>(i + 1) / bars;          // 0..1 left..right
       int barH = 1 + static_cast<int>((h - 1) * std::pow(t, 2.4f) + 0.5f);
+      if (barH < 4) barH = 4;
       if (barH > h) barH = h;
       int y0 = h - barH;                                   // bar top
       if (i < lit) {
@@ -49,8 +52,11 @@ public:
       }
     }
 
-    // ---- turbocharger compressor wheel, top-left ----
-    const int cx = 15, cy = 15, R = 14, hub = 3;
+    // ---- turbocharger compressor wheel, lower-left ----
+    // cy = h-41 keeps the wheel at a fixed screen position (bottom ~= same row) as
+    // the gauge grows taller, so growing the bars doesn't drag the wheel around.
+    const int R = 14, hub = 3, cx = 15;
+    int cy = h - 41; if (cy < R + 1) cy = R + 1;
     drawWheel(setPx, cx, cy, R, hub);
     return bmp;
   }

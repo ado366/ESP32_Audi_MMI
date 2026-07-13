@@ -817,9 +817,11 @@ void App::renderDiag() {
     float frac = mx > 0 ? bar / mx : 0.f;
     // Boost + duty readout, then the composite turbo gauge: compressor-wheel symbol
     // top-left with a full-width rising histogram; tallest bar level with the wheel.
-    display_.drawText(0, 21, kFontCompressedCenter, valStr.c_str());
-    auto gauge = TurboGauge::render(frac, 64, 56, 16);   // 16 bars -> uniform 3px cells across 64px
-    display_.drawBitmap(0, 32, 64, 56, gauge.data());    // bottom-aligned (reaches y87, no gap)
+    auto gauge = TurboGauge::render(frac, 64, 64, 16);   // 16 uniform 3px bars; 64px tall
+    display_.drawBitmap(0, 24, 64, 64, gauge.data());    // y24..87: tallest bar reaches the top, no bottom gap
+    // Boost + duty readout OVERLAID near the top, clearing only its own left width
+    // (48px) so the tall right-hand bars keep rising past it instead of being wiped.
+    display_.drawTextOverlay(0, 25, kFontCompressedLeft, 48, valStr.c_str());
     return;
   }
 

@@ -45,6 +45,7 @@ public:
   void gaugeTopText(const char* line) override { rec_.setHalfTop(line); }
   void clear() override { rec_.clear(); }
   void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, fisSafe(text).c_str()); }
+  void drawTextOverlay(uint8_t x, uint8_t y, uint8_t font, uint8_t clearW, const char* text) override { rec_.text(x, y, font, fisSafe(text).c_str(), clearW); }
   void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, text); }  // no mapping
   void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* data) override { rec_.bitmap(x, y, w, h, data); }
   void release() override { rec_.release(); }
@@ -184,7 +185,9 @@ private:
       // a dropped/half-drawn row), so redrawing a row REPAIRS it; no XOR erase, no
       // desync. Then XOR the text: dark on a lit bg (inverse), lit on a dark bg.
       uint8_t bg[56]; memset(bg, (op.f & kFontHighlight) ? 0xFF : 0x00, sizeof(bg));
-      fis_.GraphicFromArray(0, y, 64, 7, bg, 2);             // 2 = replace mode
+      uint8_t clrW = op.w ? (uint8_t)((op.w + 7) & ~7) : 64; // overlay: clear only this width (mult of 8)
+      if (clrW == 0 || clrW > 64) clrW = 64;
+      fis_.GraphicFromArray(0, y, clrW, 7, bg, 2);           // 2 = replace mode
       delayMicroseconds(5000);                               // settle before text
       return fis_.sendStringFS(op.x, y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }

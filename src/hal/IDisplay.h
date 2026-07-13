@@ -43,6 +43,10 @@ public:
   // (drawn via the cluster's own text mode, above the graphics region).
   virtual void gaugeTopText(const char* line) {}
   virtual void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) = 0;
+  // Like drawText, but clears only `clearW` px of row background (rounded to a
+  // multiple of 8) instead of the full 64 — lets a text label OVERLAY a graphic
+  // without wiping the whole row (e.g. a readout over the tall side of a gauge).
+  virtual void drawTextOverlay(uint8_t x, uint8_t y, uint8_t font, uint8_t clearW, const char* text) { drawText(x, y, font, text); }
   // Like drawText but sends bytes verbatim (no charset mapping) — used by the
   // charset explorer to see what each raw ROM code renders as.
   virtual void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) { drawText(x, y, font, text); }

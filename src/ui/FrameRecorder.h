@@ -25,8 +25,8 @@ public:
   void clear() { ops_.clear(); }
   void release() { mode_ = "top"; top1_.clear(); top2_.clear(); ops_.clear(); }
 
-  void text(uint8_t x, uint8_t y, uint8_t font, const char* s) {
-    FrameOp o; o.t = 't'; o.x = x; o.y = y; o.f = font; o.s = s ? s : ""; ops_.push_back(o);
+  void text(uint8_t x, uint8_t y, uint8_t font, const char* s, uint8_t clearW = 0) {
+    FrameOp o; o.t = 't'; o.x = x; o.y = y; o.f = font; o.w = clearW; o.s = s ? s : ""; ops_.push_back(o);
   }
   void bitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* data) {
     FrameOp o; o.t = 'b'; o.x = x; o.y = y; o.w = w; o.h = h;
