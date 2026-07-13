@@ -16,7 +16,7 @@ namespace mmi {
 
 class TurboGauge {
 public:
-  static std::vector<uint8_t> render(float frac, uint8_t w, uint8_t h, int bars = 16) {
+  static std::vector<uint8_t> render(float frac, uint8_t w, uint8_t h, int bars = 16, int spin = 0) {
     std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
     if (w < 8 || h < 8 || bars < 1) return bmp;
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
@@ -51,41 +51,40 @@ public:
       }
     }
 
-    // ---- turbocharger compressor, lower-left ----
-    // The bladed compressor WHEEL (2px housing ring + curved blades + hub) with a
-    // volute SCROLL wrapping around it (clear gap, thin tongue -> fat outlet) and an
-    // outlet duct + flange at the top-right.
-    const int Rw = 10, cx = 16;
-    int cy = h - 22; if (cy < Rw + 4) cy = Rw + 4;
-    drawCompressor(setPx, cx, cy, Rw);
+    // ---- turbocharger compressor, upper-left (top 1px below the readout) ----
+    // Bigger bladed wheel inside a THIN volute housing (hugging it, no gap) with a
+    // HORIZONTAL outlet duct + flange. `spin` rotates the blades (0..2) for animation.
+    const int Rw = 12, cx = 16, cy = Rw + 10;   // cy so the flange top lands at bitmap y7
+    drawCompressor(setPx, cx, cy, Rw, spin);
     return bmp;
   }
 
 private:
   template <typename F>
-  static void drawCompressor(F setPx, int cx, int cy, int Rw) {
+  static void drawCompressor(F setPx, int cx, int cy, int Rw, int spin) {
     constexpr float PI = 3.14159265f, TWO = 2.f * PI;
-    const int hub = 3, blades = 6;
-    const float step = TWO / blades, curve = 0.95f;
-    const float phase = -1.9f;         // orient the scroll body
+    const int hub = 3, blades = 8;
+    const float step = TWO / blades, curve = 0.85f;
+    const float phase = -1.15f;        // fat lobe near the top, where the duct joins
     auto wrap = [&](float a) { while (a < 0) a += TWO; while (a >= TWO) a -= TWO; return a; };
 
-    // --- filled volute scroll HUGGING the wheel (inner = Rw, no gap): the housing ---
-    for (int y = -Rw - 7; y <= Rw + 7; ++y)
-      for (int x = -Rw - 7; x <= Rw + 7; ++x) {
+    // --- thin volute housing HUGGING the wheel (inner = Rw, no gap) ---
+    for (int y = -Rw - 6; y <= Rw + 6; ++y)
+      for (int x = -Rw - 6; x <= Rw + 6; ++x) {
         float r  = std::sqrt((float)(x * x + y * y));
         float th = wrap(std::atan2((float)y, (float)x) - phase);
-        float Ro = (Rw + 1.f) + 5.f * (th / TWO);          // thin tongue -> fat outlet
+        float Ro = (Rw + 1.f) + 2.6f * (th / TWO);         // thin shell, slight fatten
         if (r >= Rw && r <= Ro) setPx(cx + x, cy + y);
       }
-    // --- the wheel: 2px ring + 6 curved blades + hub ---
+    // --- the wheel: 2px ring + 8 curved blades (rotated by `spin`) + hub ---
     for (int a = 0; a < 360; ++a) {
       float r = a * PI / 180.f;
       setPx(cx + (int)std::lround(Rw * std::cos(r)),       cy + (int)std::lround(Rw * std::sin(r)));
       setPx(cx + (int)std::lround((Rw - 1) * std::cos(r)), cy + (int)std::lround((Rw - 1) * std::sin(r)));
     }
+    float roff = spin * (step / 3.f);
     for (int b = 0; b < blades; ++b) {
-      float base = b * step;
+      float base = b * step + roff;
       for (int rr = hub + 1; rr <= Rw - 2; ++rr) {
         float f = (float)(rr - hub - 1) / (Rw - 2 - hub - 1);
         float ang = base + curve * f;
@@ -97,10 +96,9 @@ private:
       for (int x = -hub; x <= hub; ++x)
         if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
 
-    // --- HORIZONTAL outlet duct off the top of the housing, ending in a vertical
-    //     flange lip (matches the reference: the flange is horizontal, not angled) ---
-    const int dyt = cy - Rw - 3, dyb = cy - Rw + 2;        // duct band (horizontal)
-    const int dxs = cx + 2, dxe = cx + Rw + 9;
+    // --- HORIZONTAL outlet duct off the fat top, ending in a vertical flange lip ---
+    const int dyt = cy - Rw - 1, dyb = cy - Rw + 2;        // thin (4px) duct band
+    const int dxs = cx - 2, dxe = cx + Rw + 7;
     for (int yy = dyt; yy <= dyb; ++yy)
       for (int xx = dxs; xx <= dxe; ++xx) setPx(xx, yy);   // pipe
     for (int yy = dyt - 2; yy <= dyb + 2; ++yy)
