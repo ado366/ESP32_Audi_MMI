@@ -67,9 +67,18 @@ private:
     constexpr float PI = 3.14159265f, TWO = 2.f * PI;
     const int hub = 3, blades = 6;
     const float step = TWO / blades, curve = 0.95f;
-    const float Aend = -0.6f;          // scroll fat end / duct direction: top-right
+    const float phase = -1.9f;         // orient the scroll body
+    auto wrap = [&](float a) { while (a < 0) a += TWO; while (a >= TWO) a -= TWO; return a; };
 
-    // --- the wheel (the shape that reads well): 2px ring + 6 curved blades + hub ---
+    // --- filled volute scroll HUGGING the wheel (inner = Rw, no gap): the housing ---
+    for (int y = -Rw - 7; y <= Rw + 7; ++y)
+      for (int x = -Rw - 7; x <= Rw + 7; ++x) {
+        float r  = std::sqrt((float)(x * x + y * y));
+        float th = wrap(std::atan2((float)y, (float)x) - phase);
+        float Ro = (Rw + 1.f) + 5.f * (th / TWO);          // thin tongue -> fat outlet
+        if (r >= Rw && r <= Ro) setPx(cx + x, cy + y);
+      }
+    // --- the wheel: 2px ring + 6 curved blades + hub ---
     for (int a = 0; a < 360; ++a) {
       float r = a * PI / 180.f;
       setPx(cx + (int)std::lround(Rw * std::cos(r)),       cy + (int)std::lround(Rw * std::sin(r)));
@@ -88,26 +97,14 @@ private:
       for (int x = -hub; x <= hub; ++x)
         if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
 
-    // --- volute scroll wrapping the wheel: ~270 deg spiral OUTSIDE it (clear gap),
-    //     thin tongue growing to the fat outlet where the duct joins ---
-    const float sweep = 4.7f;
-    for (float t = 0.f; t <= 1.f; t += 0.006f) {
-      float ang = Aend - sweep * (1.f - t);
-      float rad = (Rw + 3.0f) + 2.5f * t;
-      int thick = t < 0.5f ? 2 : 3;
-      for (int w = 0; w < thick; ++w)
-        setPx(cx + (int)std::lround((rad + w) * std::cos(ang)), cy + (int)std::lround((rad + w) * std::sin(ang)));
-    }
-    // --- outlet duct + flange lip at the scroll's fat end (top-right) ---
-    const float ax = std::cos(Aend), ay = std::sin(Aend);
-    const float px = std::cos(Aend + PI / 2), py = std::sin(Aend + PI / 2);
-    const int b0 = Rw + 8;
-    for (int rr = b0 - 2; rr <= b0 + 5; ++rr)
-      for (float s = -2.5f; s <= 2.5f; s += 0.5f)
-        setPx((int)std::lround(cx + rr * ax + s * px), (int)std::lround(cy + rr * ay + s * py));
-    for (int rr = b0 + 5; rr <= b0 + 7; ++rr)              // flange lip (wider)
-      for (float s = -4.f; s <= 4.f; s += 0.5f)
-        setPx((int)std::lround(cx + rr * ax + s * px), (int)std::lround(cy + rr * ay + s * py));
+    // --- HORIZONTAL outlet duct off the top of the housing, ending in a vertical
+    //     flange lip (matches the reference: the flange is horizontal, not angled) ---
+    const int dyt = cy - Rw - 3, dyb = cy - Rw + 2;        // duct band (horizontal)
+    const int dxs = cx + 2, dxe = cx + Rw + 9;
+    for (int yy = dyt; yy <= dyb; ++yy)
+      for (int xx = dxs; xx <= dxe; ++xx) setPx(xx, yy);   // pipe
+    for (int yy = dyt - 2; yy <= dyb + 2; ++yy)
+      for (int xx = dxe; xx <= dxe + 2; ++xx) setPx(xx, yy); // flange lip
   }
 };
 
