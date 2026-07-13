@@ -16,7 +16,7 @@ namespace mmi {
 
 class TurboGauge {
 public:
-  static std::vector<uint8_t> render(float frac, uint8_t w, uint8_t h, int bars = 14) {
+  static std::vector<uint8_t> render(float frac, uint8_t w, uint8_t h, int bars = 16) {
     std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
     if (w < 8 || h < 8 || bars < 1) return bmp;
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
@@ -27,13 +27,18 @@ public:
     };
 
     // ---- rising histogram, full width, lit up to `frac` ----
+    // Uniform cell width (integer i*w/bars gave alternating 4/5px bars); pick `bars`
+    // that divides the width evenly (e.g. 16 into 64) for identical 3px bars + 1px gap.
+    int cellW = static_cast<int>(w) / bars; if (cellW < 2) cellW = 2;
+    int barW  = cellW - 1;                                 // 1px gap between bars
     int lit = static_cast<int>(frac * bars + 0.5f);
     for (int i = 0; i < bars; ++i) {
-      int x0 = i * static_cast<int>(w) / bars;
-      int x1 = (i + 1) * static_cast<int>(w) / bars - 1;   // 1px gap between bars
-      if (x1 < x0) x1 = x0;
+      int x0 = i * cellW;
+      int x1 = x0 + barW - 1;
+      // Power curve: heights accelerate toward the right (the last few bars grow
+      // fastest), so the gauge reads exponentially, not linearly.
       float t = static_cast<float>(i + 1) / bars;          // 0..1 left..right
-      int barH = 1 + static_cast<int>((h - 1) * std::pow(t, 1.5f) + 0.5f);
+      int barH = 1 + static_cast<int>((h - 1) * std::pow(t, 2.4f) + 0.5f);
       if (barH > h) barH = h;
       int y0 = h - barH;                                   // bar top
       if (i < lit) {

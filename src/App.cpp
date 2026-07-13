@@ -706,9 +706,9 @@ void App::renderDiag() {
       spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
     }
     std::string l1, l2; nowPlayingLines(l1, l2);     // identical to home's top two rows
-    l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
-    if (!l1.empty()) display_.drawText(0, 3,  kFontCompressedCenter, l1.c_str());   // match home: 3px top, 3px gap
-    if (!l2.empty()) display_.drawText(0, 13, kFontCompressedCenter, l2.c_str());
+    l1 = marquee(l1, kWin); l2 = marquee(l2, kWin);                                 // same font+window as home
+    if (!l1.empty()) display_.drawText(0, 3,  kFontCentered, l1.c_str());           // standard font (like home), 3px top
+    if (!l2.empty()) display_.drawText(0, 13, kFontCentered, l2.c_str());
     // Small digit bitmap (car-proven size): a bigger one takes too long to send and (SPEEDO)
     // starves the keepalive when speed changes fast -> cluster freezes.
     auto bmp = SpeedoRenderer::render(spd, 64, 20);
@@ -794,9 +794,9 @@ void App::renderDiag() {
     // symbol on the LEFT with a rising histogram beside it, dark elsewhere.
     display_.beginFullScreen(true);
     { std::string l1, l2; nowPlayingLines(l1, l2);   // identical to home's top two rows
-      l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
-      if (!l1.empty()) display_.drawText(0, 3,  kFontCompressedCenter, l1.c_str());   // match home: 3px top, 3px gap
-      if (!l2.empty()) display_.drawText(0, 13, kFontCompressedCenter, l2.c_str()); }
+      l1 = marquee(l1, kWin); l2 = marquee(l2, kWin);                                 // same font+window as home
+      if (!l1.empty()) display_.drawText(0, 3,  kFontCentered, l1.c_str());           // standard font (like home), 3px top
+      if (!l2.empty()) display_.drawText(0, 13, kFontCentered, l2.c_str()); }
 
     float bar, mx = 2.5f; std::string valStr;
     if (screen_ == Screen::DiagBoost) {
@@ -818,8 +818,8 @@ void App::renderDiag() {
     // Boost + duty readout, then the composite turbo gauge: compressor-wheel symbol
     // top-left with a full-width rising histogram; tallest bar level with the wheel.
     display_.drawText(0, 21, kFontCompressedCenter, valStr.c_str());
-    auto gauge = TurboGauge::render(frac, 64, 56, 14);
-    display_.drawBitmap(0, 30, 64, 56, gauge.data());
+    auto gauge = TurboGauge::render(frac, 64, 56, 16);   // 16 bars -> uniform 3px cells across 64px
+    display_.drawBitmap(0, 32, 64, 56, gauge.data());    // bottom-aligned (reaches y87, no gap)
     return;
   }
 

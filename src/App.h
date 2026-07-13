@@ -155,7 +155,6 @@ private:
   static constexpr uint32_t kNavCooldownMs = 150;
   bool navReady() { if (now_ - lastNav_ < kNavCooldownMs) return false; lastNav_ = now_; return true; }
   static constexpr int kWin = 8;
-  static constexpr int kGaugeTextWin = 11;  // chars shown in a gauge's scrolling now-playing line (~64px compressed)
   static constexpr uint8_t kGaugeTop = 24;  // lower HALFSCREEN band origin (matches Esp32Display kHalfTop)
   static constexpr int kGraphW = 64;
 };
