@@ -4,7 +4,7 @@
 #include "ui/InputRouter.h"
 #include "ui/MenuTree.h"
 #include "ui/GraphRenderer.h"
-#include "ui/TurboIcon.h"
+#include "ui/TurboGauge.h"
 #include "diag/DtcDescriptions.h"
 #include "diag/DtcElaboration.h"
 #include "diag/SpeedoRenderer.h"
@@ -707,9 +707,9 @@ void App::renderDiag() {
     }
     std::string l1, l2; nowPlayingLines(l1, l2);     // identical to home's top two rows
     l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
-    if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
-    if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str());
-    // Small digit bitmap (car-proven size): a bigger one takes too long to send and
+    if (!l1.empty()) display_.drawText(0, 3,  kFontCompressedCenter, l1.c_str());   // match home: 3px top, 3px gap
+    if (!l2.empty()) display_.drawText(0, 13, kFontCompressedCenter, l2.c_str());
+    // Small digit bitmap (car-proven size): a bigger one takes too long to send and (SPEEDO)
     // starves the keepalive when speed changes fast -> cluster freezes.
     auto bmp = SpeedoRenderer::render(spd, 64, 20);
     display_.drawBitmap(0, 38, 64, 20, bmp.data());
@@ -795,16 +795,17 @@ void App::renderDiag() {
     display_.beginFullScreen(true);
     { std::string l1, l2; nowPlayingLines(l1, l2);   // identical to home's top two rows
       l1 = marquee(l1, kGaugeTextWin); l2 = marquee(l2, kGaugeTextWin);
-      if (!l1.empty()) display_.drawText(0, 0,  kFontCompressedCenter, l1.c_str());
-      if (!l2.empty()) display_.drawText(0, 10, kFontCompressedCenter, l2.c_str()); }
+      if (!l1.empty()) display_.drawText(0, 3,  kFontCompressedCenter, l1.c_str());   // match home: 3px top, 3px gap
+      if (!l2.empty()) display_.drawText(0, 13, kFontCompressedCenter, l2.c_str()); }
 
     float bar, mx = 2.5f; std::string valStr;
     if (screen_ == Screen::DiagBoost) {
       // Hardcoded: Engine (0x01) group 11 field 3 (index 2) = boost pressure in
-      // mbar -> display in bar, 1 decimal.
+      // mbar -> bar; field 4 (index 3) = turbo duty cycle %.
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
-      char v[16]; std::snprintf(v, sizeof(v), "%.1f BAR", bar); valStr = v;
+      int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
+      char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
       if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -814,12 +815,11 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // Below the now-playing line: boost value, then the turbo symbol on the LEFT
-    // with the rising histogram beside it, the bars rising to the icon's top.
-    display_.drawText(0, 18, kFontCentered, valStr.c_str());             // boost value
-    display_.drawBitmap(0, 40, kTurboW, kTurboH, turboIcon());           // turbo symbol LEFT (40x32)
-    auto bars = GraphRenderer::renderBars(frac, 24, kTurboH, 8);         // bars RIGHT, same height/top as the icon
-    display_.drawBitmap(40, 40, 24, kTurboH, bars.data());
+    // Boost + duty readout, then the composite turbo gauge: compressor-wheel symbol
+    // top-left with a full-width rising histogram; tallest bar level with the wheel.
+    display_.drawText(0, 21, kFontCompressedCenter, valStr.c_str());
+    auto gauge = TurboGauge::render(frac, 64, 56, 14);
+    display_.drawBitmap(0, 30, 64, 56, gauge.data());
     return;
   }
 
