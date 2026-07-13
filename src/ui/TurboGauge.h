@@ -51,66 +51,48 @@ public:
       }
     }
 
-    // ---- turbocharger compressor wheel, lower-left ----
-    // cy = h-37 keeps the wheel at a fixed screen position as the gauge grows taller.
-    const int R = 14, hub = 3, cx = 15;
-    int cy = h - 37; if (cy < R + 1) cy = R + 1;
-    drawWheel(setPx, cx, cy, R, hub);
+    // ---- turbocharger compressor, lower-left ----
+    // A FILLED volute (snail scroll) housing with a central hub and an outlet duct
+    // at the top-right — reads as a compressor, not "a wheel with blades".
+    const int Rmax = 12, cx = 14;
+    int cy = h - 22; if (cy < Rmax + 2) cy = Rmax + 2;
+    drawCompressor(setPx, cx, cy, Rmax);
     return bmp;
   }
 
 private:
+  // Filled turbocharger compressor: a volute scroll (radius grows with angle, so it
+  // spirals like a snail housing) around a hub, plus an outlet duct + flange off the
+  // fat end. Modelled on flat turbo logos rather than a plain bladed wheel.
   template <typename F>
-  static void drawWheel(F setPx, int cx, int cy, int R, int hub) {
-    constexpr float PI = 3.14159265f;
-    const int blades = 6;
-    const float step = 2.f * PI / blades;
-    const float curve = 0.95f;        // blade sweep hub->rim (the swirl = turbo signature)
-    // Housing ring (2px so it reads as a casing, not a hairline).
-    for (int a = 0; a < 360; ++a) {
-      float r = a * PI / 180.f;
-      setPx(cx + (int)std::lround(R * std::cos(r)),       cy + (int)std::lround(R * std::sin(r)));
-      setPx(cx + (int)std::lround((R - 1) * std::cos(r)), cy + (int)std::lround((R - 1) * std::sin(r)));
-    }
-    // Six distinct curved blades (2px thick, clear gaps between) sweeping from the
-    // hub out to the rim — the comma/hook curve is what reads as a compressor wheel.
-    for (int b = 0; b < blades; ++b) {
-      float base = b * step;
-      for (int rr = hub + 1; rr <= R - 2; ++rr) {
-        float f = static_cast<float>(rr - hub - 1) / (R - 2 - hub - 1);  // 0 hub .. 1 rim
-        float ang = base + curve * f;
-        for (float da = 0.f; da <= 0.16f; da += 0.16f) {                 // 2px thickness
-          setPx(cx + (int)std::lround(rr * std::cos(ang + da)),
-                cy + (int)std::lround(rr * std::sin(ang + da)));
-        }
+  static void drawCompressor(F setPx, int cx, int cy, int Rmax) {
+    constexpr float PI = 3.14159265f, TWO = 2.f * PI;
+    const float phase = -0.5f;        // orient the scroll opening / outlet up-right
+    const float da    = -0.35f;       // outlet duct direction (shallow up-right)
+    const int   Rmin  = (int)(Rmax * 0.44f);
+    const float hole  = Rmax * 0.34f; // central wheel window
+    auto wrap = [&](float a) { while (a < 0) a += TWO; while (a >= TWO) a -= TWO; return a; };
+    // filled volute scroll
+    for (int y = -Rmax; y <= Rmax; ++y)
+      for (int x = -Rmax; x <= Rmax; ++x) {
+        float r  = std::sqrt((float)(x * x + y * y));
+        float th = wrap(std::atan2((float)y, (float)x) - phase);
+        float Ro = Rmin + (Rmax - Rmin) * (th / TWO);      // spiral outer edge
+        if (r >= hole && r <= Ro) setPx(cx + x, cy + y);
       }
-    }
-    // Filled centre hub (the shaft boss).
-    for (int y = -hub; y <= hub; ++y)
-      for (int x = -hub; x <= hub; ++x)
-        if (x * x + y * y <= hub * hub) setPx(cx + x, cy + y);
-
-    // Compressor intake duct off the TOP-RIGHT: a short tube (two walls) ending in
-    // a flared intake mouth — this is what turns "a bladed wheel" into a recognisable
-    // turbocharger compressor.
-    const float dth = -0.58f;                         // aim up-and-right (top-right)
-    const float ax = std::cos(dth), ay = std::sin(dth);
-    const float px = std::cos(dth + PI / 2), py = std::sin(dth + PI / 2);  // perpendicular
-    const int len = R + 8;                            // how far the duct reaches out
-    for (int rr = R - 2; rr <= len; ++rr) {
-      float bx = cx + rr * ax, by = cy + rr * ay;     // tube centreline
-      float wall = 3.0f + (rr > len - 3 ? 1.3f * (rr - (len - 3)) : 0.f);   // flare the mouth
-      for (float t = 0.f; t <= 1.f; t += 0.5f) {      // 2px-thick walls (no gaps at the angle)
-        setPx((int)std::lround(bx + (wall - t) * px), (int)std::lround(by + (wall - t) * py));
-        setPx((int)std::lround(bx - (wall - t) * px), (int)std::lround(by - (wall - t) * py));
-      }
-    }
-    // Intake mouth (cap across the flared end).
-    {
-      float bx = cx + len * ax, by = cy + len * ay, wall = 4.3f;
-      for (float s = -wall; s <= wall; s += 0.5f)
-        setPx((int)std::lround(bx + s * px), (int)std::lround(by + s * py));
-    }
+    // hub boss (the shaft centre)
+    for (int y = -2; y <= 2; ++y)
+      for (int x = -2; x <= 2; ++x)
+        if (x * x + y * y <= 2) setPx(cx + x, cy + y);
+    // outlet duct: a distinct neck + a wider flange lip
+    const float ax = std::cos(da), ay = std::sin(da);
+    const float px = std::cos(da + PI / 2), py = std::sin(da + PI / 2);
+    for (int rr = Rmax - 3; rr <= Rmax + 6; ++rr)
+      for (float s = -2.f; s <= 2.f; s += 0.5f)
+        setPx((int)std::lround(cx + rr * ax + s * px), (int)std::lround(cy + rr * ay + s * py));
+    for (int rr = Rmax + 6; rr <= Rmax + 8; ++rr)          // flange lip (wider)
+      for (float s = -3.5f; s <= 3.5f; s += 0.5f)
+        setPx((int)std::lround(cx + rr * ax + s * px), (int)std::lround(cy + rr * ay + s * py));
   }
 };
 
