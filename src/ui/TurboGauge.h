@@ -103,11 +103,17 @@ private:
       int yy = (int)std::lround(cy + Rof(th) * std::sin(th));
       if (yy < scrollTop) scrollTop = yy;
     }
-    const int dyt = scrollTop, dyb = scrollTop + 5;       // 6px pipe, top = scroll top
     const int dxs = cx - 2, dxe = cx + Rw + 5;            // shorter pipe
-    for (int yy = dyt; yy <= dyb; ++yy)
-      for (int xx = dxs; xx <= dxe; ++xx) setPx(xx, yy);   // pipe
-    for (int yy = dyt - 1; yy <= dyb + 1; ++yy)          // flange lip: only 1px wider top/bottom
+    const int pipeTop = scrollTop + 1;                   // sit a touch lower than the fat-lobe top
+    // tapering pipe: widens DOWNWARD toward the flange (continues the volute's growth)
+    for (int xx = dxs; xx <= dxe; ++xx) {
+      float t = (float)(xx - dxs) / (float)(dxe - dxs);
+      int bot = pipeTop + 3 + (int)std::lround(3.f * t); // 4px at the scroll -> 7px at the flange
+      for (int yy = pipeTop; yy <= bot; ++yy) setPx(xx, yy);
+    }
+    // vertical flange lip: 1px taller than the pipe's flange end, top and bottom
+    const int fbot = pipeTop + 6;
+    for (int yy = pipeTop - 1; yy <= fbot + 1; ++yy)
       for (int xx = dxe; xx <= dxe + 2; ++xx) setPx(xx, yy);
   }
 };

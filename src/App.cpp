@@ -320,6 +320,7 @@ void App::tick(uint32_t nowMs) {
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::DiagFaults || screen_ == Screen::Phonebook ||
       screen_ == Screen::RecentCalls) dirty_ = true; // live (marquee long names)
+  if (screen_ == Screen::DiagBoost) dirty_ = true;   // animate the turbo (demo sweep + spin)
   // Speedo renders on its 150ms sample (isDiagScreen); the display redraws the
   // big bitmap only when the km/h value actually changes, so no per-tick churn.
 
@@ -805,6 +806,11 @@ void App::renderDiag() {
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
       int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
+      if (group_.count <= 2) {                   // DEMO sweep when there's no live data (KWP not connected)
+        uint32_t ph = now_ % 8000u;              // 8s triangle: 0 -> 2.5 bar -> 0
+        bar  = (ph < 4000u ? ph : 8000u - ph) / 4000.0f * 2.5f;
+        duty = static_cast<int>(bar / 2.5f * 100.f + 0.5f);
+      }
       char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
@@ -815,9 +821,11 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
+    // Spin the compressor wheel while boost is above 1 bar (3 blade positions).
+    int spin = bar > 1.0f ? static_cast<int>((now_ / 150u) % 3u) : 0;
     // Boost + duty readout, then the composite turbo gauge: compressor-wheel symbol
     // top-left with a full-width rising histogram; tallest bar level with the wheel.
-    auto gauge = TurboGauge::render(frac, 64, 64, 16);   // 16 uniform 3px bars; 64px tall
+    auto gauge = TurboGauge::render(frac, 64, 64, 16, spin);   // 16 uniform 3px bars; 64px tall
     display_.drawBitmap(0, 24, 64, 64, gauge.data());    // y24..87: tallest bar reaches the top, no bottom gap
     // Boost + duty readout OVERLAID near the top, CENTERED. Clears 56px (x0..55) so
     // only the tallest right-edge bar (x61..63) keeps rising past it, unwiped.
