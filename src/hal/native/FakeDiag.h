@@ -23,6 +23,11 @@ public:
       add("LOAD", 45 + 30 * s2,    "%");
       add("INJ",  3.2f + 1.1f * s, "ms");
       add("MAF",  120 + 60 * s2,   "g/s");
+    } else if (ecuAddr == ecu::Engine && group == 11) {   // TURBO screen: [2]=boost mbar, [3]=duty %
+      add("RPM",   2000 + 1500 * s,               "rpm");
+      add("REQ",   1200 + 900 * s2,               "mbar");
+      add("BOOST", 1500 + 1000 * std::fabs(s),    "mbar");  // 1500..2500 mbar -> 1.5..2.5 bar
+      add("DUTY",  50 + 45 * std::fabs(s2),       "%");     // 50..95 %
     } else if (ecuAddr == ecu::Engine && group == 115) {
       add("RPM",   2000 + 1500 * s, "rpm");
       add("LOAD",  50 + 35 * s2,    "%");

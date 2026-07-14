@@ -320,7 +320,8 @@ void App::tick(uint32_t nowMs) {
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
       screen_ == Screen::DiagFaults || screen_ == Screen::Phonebook ||
       screen_ == Screen::RecentCalls) dirty_ = true; // live (marquee long names)
-  if (screen_ == Screen::DiagBoost) dirty_ = true;   // animate the turbo (demo sweep + spin)
+  // DiagBoost re-renders on its 250ms sample only (above); no per-tick animation.
+  // The FIS bus is too slow to spin the wheel without starving the keepalive.
   // Speedo renders on its 150ms sample (isDiagScreen); the display redraws the
   // big bitmap only when the km/h value actually changes, so no per-tick churn.
 
@@ -806,12 +807,12 @@ void App::renderDiag() {
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
       int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
-      if (group_.count <= 2) {                   // DEMO sweep when there's no live data (KWP not connected)
-        uint32_t ph = now_ % 8000u;              // 8s triangle: 0 -> 2.5 bar -> 0
-        bar  = (ph < 4000u ? ph : 8000u - ph) / 4000.0f * 2.5f;
-        duty = static_cast<int>(bar / 2.5f * 100.f + 0.5f);
+      if (group_.count <= 2) {                   // no live data (KWP not connected / group not read)
+        bar = 0;                                 // empty bars + NO DATA, no demo animation (was laggy)
+        valStr = "NO DATA";
+      } else {
+        char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
       }
-      char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
       if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -821,14 +822,13 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // Spin the compressor wheel while boost is above 1 bar (3 blade positions).
-    int spin = bar > 1.0f ? static_cast<int>((now_ / 150u) % 3u) : 0;
-    // Draw the gauge as many small NON-overlapping bitmaps so animation only
-    // redraws the one that changed: the static compressor (drawn once), a small
-    // spinning wheel sprite (on spin), and 8 per-cell bar bitmaps (each redraws
-    // only when its own bar fills/empties). See TurboGauge.h.
+    // STATIC turbo icon (no animation): the compressor housing + a fixed wheel are
+    // each drawn ONCE. They never change frame-to-frame, so the display dedupes them
+    // to zero FIS traffic after the first paint -- only the 8 per-cell bars and the
+    // readout redraw, and only when the boost value actually moves. Spinning the
+    // wheel starved the ~900ms keepalive on the slow FIS bus, so it was dropped.
     { auto st = TurboGauge::compressorStatic(); display_.drawBitmap(0, 33, 40, 34, st.data()); }
-    { auto wh = TurboGauge::wheelSprite(spin);  display_.drawBitmap(0, 43, 32, 21, wh.data()); }
+    { auto wh = TurboGauge::wheelSprite(0);      display_.drawBitmap(0, 43, 32, 21, wh.data()); }
     for (int j = 0; j < TurboGauge::kCells; ++j) {
       auto c = TurboGauge::barCell(frac, j);
       display_.drawBitmap(static_cast<uint8_t>(j * 8), static_cast<uint8_t>(TurboGauge::cellY(j)),
