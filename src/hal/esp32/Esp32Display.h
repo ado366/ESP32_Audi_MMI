@@ -113,11 +113,13 @@ public:
     Cmd c = q_.front();
     bool pop = true;
     switch (c.kind) {
-      // A FIS write can be dropped if the cluster's ENA handshake times out. Text
-      // draws are XOR, so a failed line must NOT be re-drawn in place (that would
-      // erase a row the cluster actually painted). Instead, on ANY failure restart
-      // the whole page: initFullScreen clears everything and all rows redraw onto
-      // blank — self-correcting, no erase, no partial state.
+      // A FIS write can be dropped if the cluster's ENA handshake times out
+      // (e.g. it was busy rendering). Draw ops are safe to RETRY IN PLACE:
+      // every op starts with an authoritative replace-mode overwrite (text rows
+      // clear their background first, bitmaps are replace mode), so a re-send
+      // repairs any partial state — no XOR desync. Only if an op keeps failing
+      // do we assume the cluster lost the page and restart it whole (Init
+      // clears the screen, so that path is visibly disruptive — last resort).
       case Cmd::Init: {
         // Whole screen, or the documented lower "HALFSCREEN" band so the top stays
         // radio/head-unit text. The FIS init takes X,Y,WIDTH,HEIGHT. The partial
@@ -125,12 +127,18 @@ public:
         // any other height (e.g. 64) is rejected mid-handshake and hangs the bus.
         uint8_t ok = graphicsTop_ ? fis_.initScreen(0, kHalfTop, 64, kHalfH, 0x82)
                                   : fis_.initFullScreen();
-        if (!ok) { restartRedraw(); pop = false; } else graphics_ = true;
+        if (!ok) { ++writeFails_; restartRedraw(); pop = false; } else graphics_ = true;
         break;
       }
       case Cmd::ExitGfx:  fis_.initScreen(0, 0, 1, 1, 0x80); graphics_ = false; break;
       case Cmd::TopLine:  { char b[17]; memcpy(b, c.buf.data(), 16); b[16] = 0; fis_.sendMsg(b); } break;
-      case Cmd::Draw:     if (!drawOp(c.op)) { restartRedraw(); pop = false; } break;
+      case Cmd::Draw:
+        if (!drawOp(c.op)) {
+          ++writeFails_;                             // visible on /status as fisfail
+          pop = false;                               // keep the op at the front
+          if (++opFails_ > kMaxOpRetries) { opFails_ = 0; restartRedraw(); }
+        } else opFails_ = 0;
+        break;
     }
     if (pop) { q_.pop_front(); if (q_.empty()) redrawFails_ = 0; } // page drained cleanly
     // Measure the gap from the END of the (blocking) write: the cluster needs the
@@ -153,10 +161,9 @@ private:
     return true;
   }
 
-  // A write in the current full-screen page failed; requeue a clean redraw of the
-  // whole page (bounded, so a persistently unresponsive cluster can't thrash).
+  // Per-op retries exhausted (or the page init failed): requeue a clean redraw of
+  // the whole page (bounded, so a persistently unresponsive cluster can't thrash).
   void restartRedraw() {
-    ++writeFails_;
     if (!fullValid_ || drawn_.empty() || ++redrawFails_ > kMaxRestarts) { redrawFails_ = 0; return; }
     q_.clear();
     q_.push_back({Cmd::Init, {}, ""});
@@ -187,7 +194,7 @@ private:
       uint8_t bg[56]; memset(bg, (op.f & kFontHighlight) ? 0xFF : 0x00, sizeof(bg));
       uint8_t clrW = op.w ? (uint8_t)((op.w + 7) & ~7) : 64; // overlay: clear only this width (mult of 8)
       if (clrW == 0 || clrW > 64) clrW = 64;
-      fis_.GraphicFromArray(0, y, clrW, 7, bg, 2);           // 2 = replace mode
+      if (!fis_.GraphicFromArray(0, y, clrW, 7, bg, 2)) return false; // 2 = replace mode
       delayMicroseconds(5000);                               // settle before text
       return fis_.sendStringFS(op.x, y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
@@ -196,8 +203,11 @@ private:
     if (bytes > (int)sizeof(buf)) bytes = sizeof(buf);
     for (int i = 0; i < bytes; ++i)
       buf[i] = (uint8_t)((hexv(op.s[i * 2]) << 4) | hexv(op.s[i * 2 + 1]));
-    fis_.GraphicFromArray(op.x, y, op.w, op.h, buf, 2);  // 2 = replace mode (self-correcting, no flash)
-    return true;
+    // Replace mode is self-correcting, so a dropped packet is safe to retry —
+    // but it MUST be detected: a silently dropped band leaves stale pixels that
+    // nothing repaints until the band's content next changes (a rarely-changing
+    // gauge band then looks frozen for seconds).
+    return fis_.GraphicFromArray(op.x, y, op.w, op.h, buf, 2) != 0;
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
@@ -205,6 +215,7 @@ private:
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
   static constexpr uint8_t  kMaxRestarts = 6;    // bound page-redraw restarts on write failure
+  static constexpr uint8_t  kMaxOpRetries = 3;   // in-place retries of one failed op before a page restart
 
   VAGFISWriter fis_;
   FrameRecorder rec_;
@@ -222,7 +233,8 @@ private:
   bool fullValid_ = false;          // drawn_ describes the live full-screen page
   bool haveTop_ = false, haveWritten_ = false;
   uint8_t redrawFails_ = 0;         // consecutive failed-write page restarts
-  uint32_t writeFails_ = 0;         // total dropped FIS writes (diagnostics)
+  uint8_t opFails_ = 0;             // consecutive in-place retries of the current op
+  uint32_t writeFails_ = 0;         // total dropped FIS writes (diagnostics; /status fisfail)
 };
 
 } // namespace mmi

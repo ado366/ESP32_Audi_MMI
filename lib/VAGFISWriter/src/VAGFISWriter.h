@@ -56,12 +56,15 @@ void sendOneByte(uint8_t X,uint8_t Y,uint8_t font, uint8_t byte);
     void sendKeepAliveMsgNB();   // non-blocking keepalive (0xC3), no delays
     void radioDisplayOff();
     void radioDisplayBlank();
-    void GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,char data[],uint8_t mode);
-    void GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,const char * const data,uint8_t mode);
-    void GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,const uint8_t * const data,uint8_t mode);
-    void GraphicOut(uint8_t x,uint8_t y, uint16_t size, char data[],uint8_t mode);
-    void GraphicOut(uint8_t x,uint8_t y, uint16_t size, const char * const data,uint8_t mode);
-    void GraphicOut(uint8_t x,uint8_t y, uint16_t size, const uint8_t* const data,uint8_t mode);
+    // Return 1 if EVERY packet was ACKed by the cluster, 0 if any was dropped —
+    // a silently dropped packet leaves stale pixels on screen with nothing to
+    // repair them, so callers must be able to detect and retry.
+    uint8_t GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,char data[],uint8_t mode);
+    uint8_t GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,const char * const data,uint8_t mode);
+    uint8_t GraphicFromArray(uint8_t x,uint8_t y, uint8_t sizex,uint8_t sizey,const uint8_t * const data,uint8_t mode);
+    uint8_t GraphicOut(uint8_t x,uint8_t y, uint16_t size, char data[],uint8_t mode);
+    uint8_t GraphicOut(uint8_t x,uint8_t y, uint16_t size, const char * const data,uint8_t mode);
+    uint8_t GraphicOut(uint8_t x,uint8_t y, uint16_t size, const uint8_t* const data,uint8_t mode);
 
     void sendRadioData(void);
     static void enableGoesHigh(void);

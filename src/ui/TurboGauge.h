@@ -51,12 +51,8 @@ public:
     // the old split-sprite layout.
     drawCompressor(setPx, 16, 20, 11, spin);
 
-    // Histogram: 16 bars, 3px wide on a 4px pitch, filled solid up to the lit
-    // level (rising power-curve heights). Unlit bars are EMPTY except a 1px
-    // baseline — NOT hollow outlines: an outline vs a filled 3x6 short bar
-    // differs by ~4 pixels on the cluster, so low-level toggles were invisible
-    // and the gauge looked frozen below ~1 bar. Empty<->full flips the whole
-    // column, unmistakable at any bar height.
+    // Histogram: 16 bars, 3px wide on a 4px pitch. Filled solid up to the lit
+    // level, hollow outline beyond it (rising power-curve heights).
     int lit = static_cast<int>(frac * kBars + 0.5f);
     for (int i = 0; i < kBars; ++i) {
       int x0 = i * 4 + 1, x1 = x0 + 2;             // +1 so the last bar reaches the edge
@@ -64,8 +60,9 @@ public:
       int y0 = kH - barH(i); if (y0 < clipTop) y0 = clipTop;
       if (i < lit) {
         for (int x = x0; x <= x1; ++x) for (int y = y0; y < kH; ++y) setPx(x, y);
-      } else {                                     // empty: baseline only
-        for (int x = x0; x <= x1; ++x) setPx(x, kH - 1);
+      } else {                                     // hollow outline
+        for (int x = x0; x <= x1; ++x) { setPx(x, y0); setPx(x, kH - 1); }
+        for (int y = y0; y < kH; ++y) { setPx(x0, y); setPx(x1, y); }
       }
     }
     return bmp;
