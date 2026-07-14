@@ -32,10 +32,16 @@ public:
     drawCompressor(setPx, 16, 19, 11, spin);   // cy=19 local == old gauge row 28
     return bmp;
   }
-  // Tall bars 10..15 into a 24x64 bitmap drawn at screen (40,24).
-  static std::vector<uint8_t> barsRight(float frac) { return bars(frac, 40, 63, 24, 64); }
-  // Short bars 0..9 into a 40x21 bitmap drawn at screen (0,67) (the gauge's bottom band).
-  static std::vector<uint8_t> barsLeft(float frac)  { return bars(frac, 0, 39, 40, 21); }
+  // The histogram is 8 independent 8px CELLS (2 bars each) so a boost change only
+  // redraws the single cell whose bar just filled/emptied (~21..64 B) instead of
+  // the whole strip. Cells 0..4 (x0..39) are the short bottom band under the
+  // compressor; cells 5..7 (x40..63) are the tall right columns.
+  static constexpr int kCells = 8;
+  static int  cellY(int j) { return j < 5 ? 67 : 24; }          // screen Y of cell j
+  static int  cellH(int j) { return j < 5 ? 21 : 64; }          // height of cell j
+  static std::vector<uint8_t> barCell(float frac, int j) {
+    return bars(frac, j * 8, j * 8 + 7, 8, cellH(j));
+  }
 
 private:
   // Height (in the 64px-tall gauge) of bar i, shared by both bar bitmaps.
