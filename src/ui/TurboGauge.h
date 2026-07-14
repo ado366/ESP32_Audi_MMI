@@ -20,8 +20,9 @@ class TurboGauge {
 public:
   static constexpr int kBars = 16;
 
-  // Compressor symbol sprite, drawn at screen (0,33). `spin` (0..2) rotates the blades.
-  static std::vector<uint8_t> compressor(int spin) {
+  // STATIC compressor (housing + duct + flange + a spin-0 wheel), drawn once at
+  // screen (0,33). Its wheel is always covered by the live wheel sprite below.
+  static std::vector<uint8_t> compressorStatic() {
     const int W = 40, H = 34;
     std::vector<uint8_t> bmp((W * H + 7) / 8, 0);
     auto setPx = [&](int x, int y) {
@@ -29,7 +30,20 @@ public:
       size_t bit = static_cast<size_t>(y) * W + x;
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
-    drawCompressor(setPx, 16, 19, 11, spin);   // cy=19 local == old gauge row 28
+    drawCompressor(setPx, 16, 19, 11, 0);      // cy=19 local == old gauge row 28
+    return bmp;
+  }
+  // Just the spinning wheel (blades + local housing), drawn at screen (0,43). Small
+  // (32x21) so a spin frame only re-sends ~84 B, not the whole compressor.
+  static std::vector<uint8_t> wheelSprite(int spin) {
+    const int W = 32, H = 21;
+    std::vector<uint8_t> bmp((W * H + 7) / 8, 0);
+    auto setPx = [&](int x, int y) {
+      if (x < 0 || x >= W || y < 0 || y >= H) return;
+      size_t bit = static_cast<size_t>(y) * W + x;
+      bmp[bit >> 3] |= (0x80 >> (bit & 7));
+    };
+    drawCompressor(setPx, 16, 9, 11, spin);    // wheel centre at local (16,9) == screen (16,52)
     return bmp;
   }
   // The histogram is 8 independent 8px CELLS (2 bars each) so a boost change only

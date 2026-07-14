@@ -824,9 +824,11 @@ void App::renderDiag() {
     // Spin the compressor wheel while boost is above 1 bar (3 blade positions).
     int spin = bar > 1.0f ? static_cast<int>((now_ / 150u) % 3u) : 0;
     // Draw the gauge as many small NON-overlapping bitmaps so animation only
-    // redraws the one that changed: the compressor sprite (on spin) and 8 per-cell
-    // bar bitmaps (each redraws only when its own bar fills/empties). See TurboGauge.h.
-    { auto comp = TurboGauge::compressor(spin); display_.drawBitmap(0, 33, 40, 34, comp.data()); }
+    // redraws the one that changed: the static compressor (drawn once), a small
+    // spinning wheel sprite (on spin), and 8 per-cell bar bitmaps (each redraws
+    // only when its own bar fills/empties). See TurboGauge.h.
+    { auto st = TurboGauge::compressorStatic(); display_.drawBitmap(0, 33, 40, 34, st.data()); }
+    { auto wh = TurboGauge::wheelSprite(spin);  display_.drawBitmap(0, 43, 32, 21, wh.data()); }
     for (int j = 0; j < TurboGauge::kCells; ++j) {
       auto c = TurboGauge::barCell(frac, j);
       display_.drawBitmap(static_cast<uint8_t>(j * 8), static_cast<uint8_t>(TurboGauge::cellY(j)),
