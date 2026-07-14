@@ -808,14 +808,16 @@ void App::renderDiag() {
       bar = m.value / 1000.0f;
       int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
       if (group_.count <= 2) {                   // DEMO when there's no live data (KWP not connected):
-        // SQUARE wave, not a sweep — gradual fill toggled one bar per tick, and
-        // near the top every step hits a TALL bar spanning all 7 bands, so the
-        // bus saturated and the UI froze. Snap directly empty <-> full instead:
-        // one redraw burst per 3s, zero bar traffic during the holds.
-        bool high = (now_ % 6000u) >= 3000u;     // 3s empty / 3s full
-        bar  = high ? 2.0f : 0.0f;
-        duty = high ? 100 : 0;
-      }
+        // The DATA moves gradually (20s triangle 0 -> 2 bar -> 0) but each bar
+        // itself snaps empty <-> full (bars are binary in compose()). The pace
+        // matters: one bar toggles per ~625ms, so even a tall-bar repaint (~7
+        // bands ≈ 370ms) drains before the next toggle — the old 8s sweep
+        // toggled every 250ms and saturated the bus near the peak (freezes).
+        uint32_t ph = now_ % 20000u;
+        bar  = (ph < 10000u ? ph : 20000u - ph) / 10000.0f * 2.0f;
+        duty = static_cast<int>(bar / 2.0f * 100.f + 0.5f);
+        mx   = 2.0f;                             // demo full-scale = 2.0: ALL 16 bars lit at the peak
+      }                                          // (live data keeps the 2.5 scale)
       char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
