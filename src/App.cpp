@@ -807,10 +807,14 @@ void App::renderDiag() {
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
       int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
-      if (group_.count <= 2) {                   // DEMO sweep when there's no live data (KWP not connected)
-        uint32_t ph = now_ % 8000u;              // 8s triangle: 0 -> 2 bar -> 0
-        bar  = (ph < 4000u ? ph : 8000u - ph) / 4000.0f * 2.0f;
-        duty = static_cast<int>(bar / 2.0f * 100.f + 0.5f);
+      if (group_.count <= 2) {                   // DEMO when there's no live data (KWP not connected):
+        // SQUARE wave, not a sweep — gradual fill toggled one bar per tick, and
+        // near the top every step hits a TALL bar spanning all 7 bands, so the
+        // bus saturated and the UI froze. Snap directly empty <-> full instead:
+        // one redraw burst per 3s, zero bar traffic during the holds.
+        bool high = (now_ % 6000u) >= 3000u;     // 3s empty / 3s full
+        bar  = high ? 2.0f : 0.0f;
+        duty = high ? 100 : 0;
       }
       char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
@@ -822,10 +826,10 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // Spin the compressor wheel above 1 bar. The wheel advances one blade step
-    // per 250ms render tick (the diag sample cadence), and only dirties the 3
-    // bands it spans — cheap now that bands ride jumbo packets.
-    int spin = bar > 1.0f ? static_cast<int>((now_ / 250u) % 3u) : 0;
+    // Spin the compressor wheel above 1 bar: one blade step per 500ms, dirtying
+    // only the 3 bands the wheel spans (~6 jumbo packets ≈ 100ms of bus). At
+    // 250ms the spin alone kept the FIS ~60% busy and the UI felt frozen.
+    int spin = bar > 1.0f ? static_cast<int>((now_ / 500u) % 3u) : 0;
     // The gauge (compressor + bars) is ONE 64-wide composition drawn as 64x8
     // bands: only 64-wide bitmaps ride the FIS 32-byte jumbo packets (4 rows
     // per packet); anything narrower degrades to one packet per pixel row and
