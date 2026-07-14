@@ -36,7 +36,10 @@ public:
   // The full gauge (compressor + bars at `frac` fill) as one 64x56 row-major
   // bitmap (448 bytes). Band j is the 64 bytes at offset j*64 — the caller
   // slices with data() + j*64, no per-band recompose.
-  static std::vector<uint8_t> compose(float frac) {
+  // `spin` (0..2) rotates the wheel blades; the wheel spans only bands 1-3, so a
+  // spin frame re-sends just those 3 bands (6 jumbo packets) — affordable, unlike
+  // the old per-sprite layout where it was 21 row-packets.
+  static std::vector<uint8_t> compose(float frac, int spin = 0) {
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
     std::vector<uint8_t> bmp(static_cast<size_t>(kW) * kH / 8, 0);
     auto setPx = [&](int x, int y) {
@@ -45,8 +48,8 @@ public:
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
     // Compressor: wheel centre at local (16,20) == screen (16,52), same place as
-    // the old split-sprite layout. Static spin (no animation).
-    drawCompressor(setPx, 16, 20, 11, 0);
+    // the old split-sprite layout.
+    drawCompressor(setPx, 16, 20, 11, spin);
 
     // Histogram: 16 bars, 3px wide on a 4px pitch. Filled solid up to the lit
     // level, hollow outline beyond it (rising power-curve heights).

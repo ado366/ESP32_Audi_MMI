@@ -807,12 +807,12 @@ void App::renderDiag() {
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
       int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
-      if (group_.count <= 2) {                   // no live data (KWP not connected / group not read)
-        bar = 0;                                 // empty bars + NO DATA, no demo animation (was laggy)
-        valStr = "NO DATA";
-      } else {
-        char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
+      if (group_.count <= 2) {                   // DEMO sweep when there's no live data (KWP not connected)
+        uint32_t ph = now_ % 8000u;              // 8s triangle: 0 -> 2 bar -> 0
+        bar  = (ph < 4000u ? ph : 8000u - ph) / 4000.0f * 2.0f;
+        duty = static_cast<int>(bar / 2.0f * 100.f + 0.5f);
       }
+      char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
       if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -822,13 +822,17 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // The gauge (static compressor + bars) is ONE 64-wide composition drawn as
-    // 64x8 bands: only 64-wide bitmaps ride the FIS 32-byte jumbo packets (4 rows
+    // Spin the compressor wheel above 1 bar. The wheel advances one blade step
+    // per 250ms render tick (the diag sample cadence), and only dirties the 3
+    // bands it spans — cheap now that bands ride jumbo packets.
+    int spin = bar > 1.0f ? static_cast<int>((now_ / 250u) % 3u) : 0;
+    // The gauge (compressor + bars) is ONE 64-wide composition drawn as 64x8
+    // bands: only 64-wide bitmaps ride the FIS 32-byte jumbo packets (4 rows
     // per packet); anything narrower degrades to one packet per pixel row and
     // takes seconds. The per-op differ resends only bands whose bytes changed,
-    // so idle = zero traffic and a boost step redraws ~1-2 bands (2-4 packets).
+    // so idle = zero traffic and a boost/spin step redraws only 1-3 bands.
     {
-      auto g = TurboGauge::compose(frac);
+      auto g = TurboGauge::compose(frac, spin);
       for (int j = 0; j < TurboGauge::kBands; ++j)
         display_.drawBitmap(0, static_cast<uint8_t>(TurboGauge::bandY(j)),
                             TurboGauge::kW, TurboGauge::kBandH, g.data() + j * (TurboGauge::kW / 8) * TurboGauge::kBandH);
