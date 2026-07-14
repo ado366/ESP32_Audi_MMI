@@ -822,17 +822,16 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // STATIC turbo icon (no animation): the compressor housing + a fixed wheel are
-    // each drawn ONCE. They never change frame-to-frame, so the display dedupes them
-    // to zero FIS traffic after the first paint -- only the 8 per-cell bars and the
-    // readout redraw, and only when the boost value actually moves. Spinning the
-    // wheel starved the ~900ms keepalive on the slow FIS bus, so it was dropped.
-    { auto st = TurboGauge::compressorStatic(); display_.drawBitmap(0, 33, 40, 34, st.data()); }
-    { auto wh = TurboGauge::wheelSprite(0);      display_.drawBitmap(0, 43, 32, 21, wh.data()); }
-    for (int j = 0; j < TurboGauge::kCells; ++j) {
-      auto c = TurboGauge::barCell(frac, j);
-      display_.drawBitmap(static_cast<uint8_t>(j * 8), static_cast<uint8_t>(TurboGauge::cellY(j)),
-                          8, static_cast<uint8_t>(TurboGauge::cellH(j)), c.data());
+    // The gauge (static compressor + bars) is ONE 64-wide composition drawn as
+    // 64x8 bands: only 64-wide bitmaps ride the FIS 32-byte jumbo packets (4 rows
+    // per packet); anything narrower degrades to one packet per pixel row and
+    // takes seconds. The per-op differ resends only bands whose bytes changed,
+    // so idle = zero traffic and a boost step redraws ~1-2 bands (2-4 packets).
+    {
+      auto g = TurboGauge::compose(frac);
+      for (int j = 0; j < TurboGauge::kBands; ++j)
+        display_.drawBitmap(0, static_cast<uint8_t>(TurboGauge::bandY(j)),
+                            TurboGauge::kW, TurboGauge::kBandH, g.data() + j * (TurboGauge::kW / 8) * TurboGauge::kBandH);
     }
     // Boost + duty readout OVERLAID near the top, CENTERED. Clears 56px (x0..55) so
     // only the tallest right-edge bar (x61..63) keeps rising past it, unwiped.

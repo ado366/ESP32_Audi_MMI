@@ -1,14 +1,21 @@
-// TurboGauge.h — the turbo gauge graphic (Boost view), split into SMALL, NON-
-// overlapping 1bpp bitmaps so the screen can animate without a slow full redraw:
-//   * compressor(spin) — the compressor symbol (40x34), redraws only when the
-//     wheel spins.
-//   * barsRight(frac)/barsLeft(frac) — the rising histogram split into the tall
-//     right columns (24x64) and the short left columns (40x21), redraw only when
-//     the boost level changes.
-// Because the three rectangles don't overlap, the frame differ redraws just the
-// one that changed (~85..190 bytes) instead of the whole 64x64 (~500 bytes).
-// The full gauge sits at screen y24..87: compressor at (0,33), left bars at
-// (0,67), right bars at (40,24). Bit order = y*w + x, MSB-first.
+// TurboGauge.h — the turbo gauge graphic (Boost view), composed into ONE 64-wide
+// 1bpp canvas and drawn as 64x8 horizontal BANDS.
+//
+// WHY 64-wide bands: VAGFISWriter::GraphicFromArray only uses 32-byte "jumbo"
+// packets (4 rows per packet) when the bitmap is exactly 64 wide — the FIS
+// graphics packet fills horizontally and wraps at the INIT'D SCREEN width, so
+// full-width rows are the only safe multi-row payload. Any narrower bitmap falls
+// back to ONE packet per pixel row (huge per-packet handshake overhead + 2ms
+// inter-packet delay). The old per-cell layout (40x34 icon + 32x21 wheel + eight
+// 8-wide cells) cost ~350 row-packets = seconds per paint and 250ms+ blocking
+// per tall-cell redraw. As 7 bands of 64x8 the whole gauge is 14 jumbo packets,
+// and a boost change redraws only the 1-2 bands the bar tops crossed.
+//
+// Layout (screen coords): gauge occupies y32..87. Compressor symbol on the left
+// (static, spin 0 — animation dropped: the FIS bus is too slow), histogram bars
+// across the full width; bars under the compressor (x<=39) clip to the bottom
+// 21 rows, bars to its right (x>=40) rise to the gauge top.
+// Bit order = y*64 + x, MSB-first (row-major, matches jumbo packets exactly).
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -18,80 +25,54 @@ namespace mmi {
 
 class TurboGauge {
 public:
-  static constexpr int kBars = 16;
+  static constexpr int kBars  = 16;
+  static constexpr int kBands = 7;    // 7 bands x 8 rows = y32..87
+  static constexpr int kBandH = 8;
+  static constexpr int kTop   = 32;   // screen Y of band 0
+  static constexpr int kW     = 64;
+  static constexpr int kH     = kBands * kBandH;  // 56
+  static int bandY(int j) { return kTop + j * kBandH; }
 
-  // STATIC compressor (housing + duct + flange + a spin-0 wheel), drawn once at
-  // screen (0,33). Its wheel is always covered by the live wheel sprite below.
-  static std::vector<uint8_t> compressorStatic() {
-    const int W = 40, H = 34;
-    std::vector<uint8_t> bmp((W * H + 7) / 8, 0);
-    auto setPx = [&](int x, int y) {
-      if (x < 0 || x >= W || y < 0 || y >= H) return;
-      size_t bit = static_cast<size_t>(y) * W + x;
-      bmp[bit >> 3] |= (0x80 >> (bit & 7));
-    };
-    drawCompressor(setPx, 16, 19, 11, 0);      // cy=19 local == old gauge row 28
-    return bmp;
-  }
-  // Just the spinning wheel (blades + local housing), drawn at screen (0,43). Small
-  // (32x21) so a spin frame only re-sends ~84 B, not the whole compressor.
-  static std::vector<uint8_t> wheelSprite(int spin) {
-    const int W = 32, H = 21;
-    std::vector<uint8_t> bmp((W * H + 7) / 8, 0);
-    auto setPx = [&](int x, int y) {
-      if (x < 0 || x >= W || y < 0 || y >= H) return;
-      size_t bit = static_cast<size_t>(y) * W + x;
-      bmp[bit >> 3] |= (0x80 >> (bit & 7));
-    };
-    drawCompressor(setPx, 16, 9, 11, spin);    // wheel centre at local (16,9) == screen (16,52)
-    return bmp;
-  }
-  // The histogram is 8 independent 8px CELLS (2 bars each) so a boost change only
-  // redraws the single cell whose bar just filled/emptied (~21..64 B) instead of
-  // the whole strip. Cells 0..4 (x0..39) are the short bottom band under the
-  // compressor; cells 5..7 (x40..63) are the tall right columns.
-  static constexpr int kCells = 8;
-  static int  cellY(int j) { return j < 5 ? 67 : 24; }          // screen Y of cell j
-  static int  cellH(int j) { return j < 5 ? 21 : 64; }          // height of cell j
-  static std::vector<uint8_t> barCell(float frac, int j) {
-    return bars(frac, j * 8, j * 8 + 7, 8, cellH(j));
-  }
-
-private:
-  // Height (in the 64px-tall gauge) of bar i, shared by both bar bitmaps.
-  static int barH(int i) {
-    float t = static_cast<float>(i + 1) / kBars;
-    int h = 1 + static_cast<int>((64 - 1) * std::pow(t, 2.4f) + 0.5f);
-    if (h < 6)  h = 6;
-    if (h > 64) h = 64;
-    return h;
-  }
-  // Render the histogram bars whose full-gauge x falls in [fxlo,fxhi] into a WxH
-  // bitmap. The bitmap is the BOTTOM H rows of the gauge (its bottom row = gauge
-  // bottom), so a bar's top is at local row H-barH. Local x = full_x - fxlo.
-  static std::vector<uint8_t> bars(float frac, int fxlo, int fxhi, int W, int H) {
+  // The full gauge (compressor + bars at `frac` fill) as one 64x56 row-major
+  // bitmap (448 bytes). Band j is the 64 bytes at offset j*64 — the caller
+  // slices with data() + j*64, no per-band recompose.
+  static std::vector<uint8_t> compose(float frac) {
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
-    std::vector<uint8_t> bmp((static_cast<size_t>(W) * H + 7) / 8, 0);
+    std::vector<uint8_t> bmp(static_cast<size_t>(kW) * kH / 8, 0);
     auto setPx = [&](int x, int y) {
-      if (x < 0 || x >= W || y < 0 || y >= H) return;
-      size_t bit = static_cast<size_t>(y) * W + x;
+      if (x < 0 || x >= kW || y < 0 || y >= kH) return;
+      size_t bit = static_cast<size_t>(y) * kW + x;
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
-    const int cellW = 4, barW = 3;
+    // Compressor: wheel centre at local (16,20) == screen (16,52), same place as
+    // the old split-sprite layout. Static spin (no animation).
+    drawCompressor(setPx, 16, 20, 11, 0);
+
+    // Histogram: 16 bars, 3px wide on a 4px pitch. Filled solid up to the lit
+    // level, hollow outline beyond it (rising power-curve heights).
     int lit = static_cast<int>(frac * kBars + 0.5f);
     for (int i = 0; i < kBars; ++i) {
-      int fx0 = i * cellW + 1, fx1 = fx0 + barW - 1;   // +1 so the last bar reaches the edge
-      if (fx0 < fxlo || fx1 > fxhi) continue;          // this bar isn't in this bitmap
-      int lx0 = fx0 - fxlo, lx1 = fx1 - fxlo;
-      int y0 = H - barH(i); if (y0 < 0) y0 = 0;        // bar top (bottom = gauge bottom)
+      int x0 = i * 4 + 1, x1 = x0 + 2;             // +1 so the last bar reaches the edge
+      int clipTop = (x1 <= 39) ? (kH - 21) : 0;    // under the compressor: bottom 21 rows only
+      int y0 = kH - barH(i); if (y0 < clipTop) y0 = clipTop;
       if (i < lit) {
-        for (int x = lx0; x <= lx1; ++x) for (int y = y0; y < H; ++y) setPx(x, y);
-      } else {                                         // hollow outline
-        for (int x = lx0; x <= lx1; ++x) { setPx(x, y0); setPx(x, H - 1); }
-        for (int y = y0; y < H; ++y) { setPx(lx0, y); setPx(lx1, y); }
+        for (int x = x0; x <= x1; ++x) for (int y = y0; y < kH; ++y) setPx(x, y);
+      } else {                                     // hollow outline
+        for (int x = x0; x <= x1; ++x) { setPx(x, y0); setPx(x, kH - 1); }
+        for (int y = y0; y < kH; ++y) { setPx(x0, y); setPx(x1, y); }
       }
     }
     return bmp;
+  }
+
+private:
+  // Height of bar i on the 56px-tall gauge (power curve: short -> tall).
+  static int barH(int i) {
+    float t = static_cast<float>(i + 1) / kBars;
+    int h = 1 + static_cast<int>((kH - 1) * std::pow(t, 2.4f) + 0.5f);
+    if (h < 6)  h = 6;
+    if (h > kH) h = kH;
+    return h;
   }
 
   template <typename F>
