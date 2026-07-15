@@ -873,17 +873,8 @@ void App::renderDiag() {
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
       duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
-      if (group_.count <= 2) {                   // DEMO when there's no live data (KWP not connected):
-        // The DATA moves gradually (20s triangle 0 -> 2 bar -> 0) but each bar
-        // itself snaps empty <-> full (bars are binary in compose()). The pace
-        // matters: one bar toggles per ~625ms, so even a tall-bar repaint (~7
-        // bands ≈ 370ms) drains before the next toggle — the old 8s sweep
-        // toggled every 250ms and saturated the bus near the peak (freezes).
-        uint32_t ph = now_ % 20000u;
-        bar  = (ph < 10000u ? ph : 20000u - ph) / 10000.0f * 2.0f;
-        duty = static_cast<int>(bar / 2.0f * 100.f + 0.5f);
-        mx   = 2.0f;                             // demo full-scale = 2.0: ALL 16 bars lit at the peak
-      }                                          // (live data keeps the 2.5 scale)
+      // No demo/test sweep: with no live KWP data the bars stay empty and the
+      // readout shows dashes (see below). Real EDC15 grp 11 drives everything.
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
       if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -923,8 +914,13 @@ void App::renderDiag() {
     // one digit; the '.' in the boost value never repaints at all.
     if (screen_ == Screen::DiagBoost) {
       char v1[8], v2[8];
-      std::snprintf(v1, sizeof(v1), "%.1f", bar);   // always 3 chars: X.Y
-      std::snprintf(v2, sizeof(v2), "%3d", duty);   // always 3 chars, space-padded
+      if (group_.count > 2) {
+        std::snprintf(v1, sizeof(v1), "%.1f", bar);   // always 3 chars: X.Y
+        std::snprintf(v2, sizeof(v2), "%3d", duty);   // always 3 chars, space-padded
+      } else {                                        // KWP not connected / no data
+        std::snprintf(v1, sizeof(v1), "-.-");
+        std::snprintf(v2, sizeof(v2), " --");
+      }
       char c[2] = {0, 0};
       // Boost X.Y with a NARROW 3px cell for the '.' (its glyph is ~2px; a full
       // 5px digit cell left a weird gap between the dot and the tenths digit).
