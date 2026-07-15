@@ -893,20 +893,27 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // Spin the compressor wheel above 1 bar: one blade step per second. Faster
-    // steps repaint the wheel bands so often the compressor reads as flashing
-    // (and at 250ms the spin alone kept the FIS ~60% busy).
+    // Spin the compressor wheel above 1 bar (one blade step per second).
     int spin = bar > 1.0f ? static_cast<int>((now_ / 1000u) % 3u) : 0;
-    // The gauge (compressor + bars) is ONE 64-wide composition drawn as 64x8
-    // bands: only 64-wide bitmaps ride the FIS 32-byte jumbo packets (4 rows
-    // per packet); anything narrower degrades to one packet per pixel row and
-    // takes seconds. The per-op differ resends only bands whose bytes changed,
-    // so idle = zero traffic and a boost/spin step redraws only 1-3 bands.
+    // Rect-op gauge (see TurboGauge.h): a STATIC layer (compressor + all bar
+    // outlines, 7 bands, sent once), the wheel sprite (narrow bitmap, redrawn
+    // on spin), and one fixed-slot fillRect per bar INTERIOR — a bar toggle is
+    // a single 7-byte no-claim 0x53 fill/clear that paints atomically (~10ms),
+    // instead of ~450 bytes of band bitmaps wiping in over ~200ms.
     {
-      auto g = TurboGauge::compose(frac, spin);
+      auto st = TurboGauge::composeStatic();
       for (int j = 0; j < TurboGauge::kBands; ++j)
         display_.drawBitmap(0, static_cast<uint8_t>(TurboGauge::bandY(j)),
-                            TurboGauge::kW, TurboGauge::kBandH, g.data() + j * (TurboGauge::kW / 8) * TurboGauge::kBandH);
+                            TurboGauge::kW, TurboGauge::kBandH, st.data() + j * (TurboGauge::kW / 8) * TurboGauge::kBandH);
+      auto wh = TurboGauge::wheelSprite(spin);
+      display_.drawBitmap(TurboGauge::kWheelX, TurboGauge::kWheelY,
+                          TurboGauge::kWheelW, TurboGauge::kWheelH, wh.data());
+      int lit = static_cast<int>(frac * TurboGauge::kBars + 0.5f);
+      for (int i = 0; i < TurboGauge::kBars; ++i) {
+        int rx, ry, rw, rh; TurboGauge::barInterior(i, rx, ry, rw, rh);
+        display_.fillRect(static_cast<uint8_t>(rx), static_cast<uint8_t>(ry),
+                          static_cast<uint8_t>(rw), static_cast<uint8_t>(rh), i < lit);
+      }
     }
     // Boost + duty readout, CENTERED, full-width row. Bars top out at y32 so
     // nothing lives beside it any more — a full 64px clear rides 2 jumbo packets

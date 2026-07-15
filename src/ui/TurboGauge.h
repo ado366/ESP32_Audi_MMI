@@ -1,20 +1,17 @@
-// TurboGauge.h — the turbo gauge graphic (Boost view), composed into ONE 64-wide
-// 1bpp canvas and drawn as 64x8 horizontal BANDS.
+// TurboGauge.h — the turbo gauge graphic (Boost view), rect-op edition.
 //
-// WHY 64-wide bands: VAGFISWriter::GraphicFromArray only uses 32-byte "jumbo"
-// packets (4 rows per packet) when the bitmap is exactly 64 wide — the FIS
-// graphics packet fills horizontally and wraps at the INIT'D SCREEN width, so
-// full-width rows are the only safe multi-row payload. Any narrower bitmap falls
-// back to ONE packet per pixel row (huge per-packet handshake overhead + 2ms
-// inter-packet delay). The old per-cell layout (40x34 icon + 32x21 wheel + eight
-// 8-wide cells) cost ~350 row-packets = seconds per paint and 250ms+ blocking
-// per tall-cell redraw. As 7 bands of 64x8 the whole gauge is 14 jumbo packets,
-// and a boost change redraws only the 1-2 bands the bar tops crossed.
+// Layering (cheapest possible FIS traffic, HW-verified no-claim 0x53):
+//   1. STATIC layer: compressor (housing+duct+flange+spin-0 wheel) and the hollow
+//      OUTLINES of all 10 bars, composed into one 64x56 canvas drawn as 7 bands
+//      of 64x8 (jumbo packets). Content never changes -> sent once per page.
+//   2. WHEEL sprite (32x21 at screen (0,43)): redrawn on spin steps. Narrow, so
+//      Esp32Display sends it via a workspace-relative multi-row path (~5 pkts).
+//   3. BARS: each bar is ONE fillRect op on its INTERIOR (outline untouched),
+//      fixed slot, only the lit flag toggles -> a bar toggle is a single 7-byte
+//      0x53 fill/clear + workspace reset (~2 packets, paints atomically).
 //
-// Layout (screen coords): gauge occupies y32..87. Compressor symbol on the left
-// (static, spin 0 — animation dropped: the FIS bus is too slow), histogram bars
-// across the full width; bars under the compressor (x<=39) clip to the bottom
-// 21 rows, bars to its right (x>=40) rise to the gauge top.
+// Layout (screen coords): gauge occupies y32..87. Bars 5px wide on a 6px pitch
+// spanning x2..60; bars under the compressor (x<=39) clip to the bottom 21 rows.
 // Bit order = y*64 + x, MSB-first (row-major, matches jumbo packets exactly).
 #pragma once
 #include <cstdint>
@@ -25,8 +22,7 @@ namespace mmi {
 
 class TurboGauge {
 public:
-  static constexpr int kBars  = 10;   // FIS-Control/Maxi-K use 10 — fewer toggles
-                                      // per sweep (less FIS traffic), chunkier bars
+  static constexpr int kBars  = 10;   // FIS-Control/Maxi-K bar count
   static constexpr int kBands = 7;    // 7 bands x 8 rows = y32..87
   static constexpr int kBandH = 8;
   static constexpr int kTop   = 32;   // screen Y of band 0
@@ -34,39 +30,57 @@ public:
   static constexpr int kH     = kBands * kBandH;  // 56
   static int bandY(int j) { return kTop + j * kBandH; }
 
-  // The full gauge (compressor + bars at `frac` fill) as one 64x56 row-major
-  // bitmap (448 bytes). Band j is the 64 bytes at offset j*64 — the caller
-  // slices with data() + j*64, no per-band recompose.
-  // `spin` (0..2) rotates the wheel blades; the wheel spans only bands 1-3, so a
-  // spin frame re-sends just those 3 bands (6 jumbo packets) — affordable, unlike
-  // the old per-sprite layout where it was 21 row-packets.
-  static std::vector<uint8_t> compose(float frac, int spin = 0) {
-    if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+  // The STATIC layer (compressor + all bar outlines) as one 64x56 row-major
+  // bitmap (448 bytes). Band j is the 64 bytes at offset j*64. Never changes.
+  static std::vector<uint8_t> composeStatic() {
     std::vector<uint8_t> bmp(static_cast<size_t>(kW) * kH / 8, 0);
     auto setPx = [&](int x, int y) {
       if (x < 0 || x >= kW || y < 0 || y >= kH) return;
       size_t bit = static_cast<size_t>(y) * kW + x;
       bmp[bit >> 3] |= (0x80 >> (bit & 7));
     };
-    // Compressor: wheel centre at local (16,20) == screen (16,52), same place as
-    // the old split-sprite layout.
-    drawCompressor(setPx, 16, 20, 11, spin);
-
-    // Histogram: 10 bars, 5px wide on a 6px pitch. Filled solid up to the lit
-    // level, hollow outline beyond it (rising power-curve heights).
-    int lit = static_cast<int>(frac * kBars + 0.5f);
+    // Compressor: wheel centre at local (16,20) == screen (16,52). The wheel
+    // drawn here (spin 0) is always covered by the live wheel sprite.
+    drawCompressor(setPx, 16, 20, 11, 0);
+    // Hollow outline for every bar (the fill rects only touch the interiors).
     for (int i = 0; i < kBars; ++i) {
-      int x0 = i * 6 + 2, x1 = x0 + 4;             // bars span x2..60
-      int clipTop = (x1 <= 39) ? (kH - 21) : 0;    // under the compressor: bottom 21 rows only
-      int y0 = kH - barH(i); if (y0 < clipTop) y0 = clipTop;
-      if (i < lit) {
-        for (int x = x0; x <= x1; ++x) for (int y = y0; y < kH; ++y) setPx(x, y);
-      } else {                                     // hollow outline
-        for (int x = x0; x <= x1; ++x) { setPx(x, y0); setPx(x, kH - 1); }
-        for (int y = y0; y < kH; ++y) { setPx(x0, y); setPx(x1, y); }
-      }
+      int x0, y0, w, h; barBox(i, x0, y0, w, h);
+      y0 -= kTop;                                  // to local canvas coords
+      for (int x = x0; x < x0 + w; ++x) { setPx(x, y0); setPx(x, y0 + h - 1); }
+      for (int y = y0; y < y0 + h; ++y) { setPx(x0, y); setPx(x0 + w - 1, y); }
     }
     return bmp;
+  }
+
+  // Just the spinning wheel (blades + local housing ring), drawn at screen
+  // (0,43). Narrow (32x21) so a spin frame rides the workspace bitmap path.
+  static std::vector<uint8_t> wheelSprite(int spin) {
+    const int W = 32, H = 21;
+    std::vector<uint8_t> bmp((W * H + 7) / 8, 0);
+    auto setPx = [&](int x, int y) {
+      if (x < 0 || x >= W || y < 0 || y >= H) return;
+      size_t bit = static_cast<size_t>(y) * W + x;
+      bmp[bit >> 3] |= (0x80 >> (bit & 7));
+    };
+    drawCompressor(setPx, 16, 9, 11, spin);        // wheel centre local (16,9) == screen (16,52)
+    return bmp;
+  }
+  static constexpr int kWheelX = 0, kWheelY = 43, kWheelW = 32, kWheelH = 21;
+
+  // Full bounding box of bar i in SCREEN coordinates (outline included).
+  static void barBox(int i, int& x, int& y, int& w, int& h) {
+    x = i * 6 + 2; w = 5;                          // bars span x2..60
+    int bh = barH(i);
+    int x1 = x + w - 1;
+    int clipTop = (x1 <= 39) ? (kH - 21) : 0;      // under the compressor: bottom 21 rows
+    int top = kH - bh; if (top < clipTop) top = clipTop;
+    y = kTop + top; h = kH - top;
+  }
+  // INTERIOR of bar i in SCREEN coordinates — the region the fill rect toggles.
+  // Fixed slot per bar: only the lit flag changes frame-to-frame.
+  static void barInterior(int i, int& x, int& y, int& w, int& h) {
+    barBox(i, x, y, w, h);
+    x += 1; y += 1; w -= 2; h -= 2;
   }
 
 private:

@@ -146,6 +146,9 @@ function draw(f){cx.fillStyle=BG;cx.fillRect(0,0,cv.width,cv.height);
       const w=textW(o.s,cw),x=cen?Math.max(0,(W-w)/2):o.x;
       if(hl){cx.fillStyle=ON;cx.fillRect(0,o.y*S,W*S,7*S);text(o.s,x,o.y,BG,cw);}
       else text(o.s,x,o.y,ON,cw);}
+    else if(o.t=='rect'){cx.fillStyle=o.f?ON:BG;
+      for(let yy=0;yy<o.h;yy++)for(let xx=0;xx<o.w;xx++)
+        cx.fillRect((o.x+xx)*S,(o.y+yy)*S,o.f?S-1:S,o.f?S-1:S);}
     else if(o.t=='bmp'){cx.fillStyle=ON;for(let yy=0;yy<o.h;yy++)for(let xx=0;xx<o.w;xx++){
       let bit=yy*o.w+xx,by=parseInt(o.d.substr((bit>>3)*2,2),16);
       if(by&(0x80>>(bit&7)))cx.fillRect((o.x+xx)*S,(o.y+yy)*S,S-1,S-1);}}}}

@@ -53,6 +53,12 @@ public:
   // 1bpp bitmap, row-major, width/height in pixels (height a multiple of 8).
   virtual void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
                           const uint8_t* data) = 0;
+  // Solid rectangle: filled lit or cleared dark. On the FIS this is a single
+  // 7-byte no-claim 0x53 command (no bitmap data), so a rect toggle is near-free
+  // and paints atomically — use it for gauge bars, highlight blocks, row clears.
+  virtual void fillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool lit) {
+    (void)x; (void)y; (void)w; (void)h; (void)lit;
+  }
   virtual void clear() = 0;
 
   // Return control of the display to the car (exit graphics mode).

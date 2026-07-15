@@ -48,6 +48,7 @@ public:
   void drawTextOverlay(uint8_t x, uint8_t y, uint8_t font, uint8_t clearW, const char* text) override { rec_.text(x, y, font, fisSafe(text).c_str(), clearW); }
   void drawTextRaw(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, text); }  // no mapping
   void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* data) override { rec_.bitmap(x, y, w, h, data); }
+  void fillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool lit) override { rec_.rect(x, y, w, h, lit); }
   void release() override { rec_.release(); }
 
   std::string toJson() const { return rec_.toJson(); }
@@ -219,6 +220,17 @@ private:
       delayMicroseconds(5000);                               // settle before text
       return fis_.sendStringFS(op.x, y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }
+    if (op.t == 'r') {
+      // Solid rect via a no-claim 0x53 (TLBFISLib finding, HW-verified on this
+      // cluster): 0x03 = fill lit, 0x02 = clear dark — one 7-byte command, no
+      // bitmap data, paints atomically. The command MOVES the workspace, so
+      // follow with a workspace reset (0x00, no clear). Both idempotent -> safe
+      // to retry as one unit.
+      uint8_t ok1 = fis_.initScreen(op.x, y, op.w, op.h, op.f ? 0x03 : 0x02);
+      delayMicroseconds(2000);
+      uint8_t ok2 = fis_.initScreen(0, 0, 64, 88, 0x00);
+      return ok1 && ok2;
+    }
     uint8_t buf[1024];
     int bytes = (op.w * op.h + 7) / 8;
     if (bytes > (int)sizeof(buf)) bytes = sizeof(buf);
@@ -228,6 +240,23 @@ private:
     // but it MUST be detected: a silently dropped band leaves stale pixels that
     // nothing repaints until the band's content next changes (a rarely-changing
     // gauge band then looks frozen for seconds).
+    if (op.w < 64) {
+      // NARROW bitmap: graphics packets wrap at the WORKSPACE width (TLBFISLib),
+      // so move the workspace onto the bitmap's rect and send multi-row packets
+      // (32 data bytes each) instead of VAGFISWriter's 1-packet-per-pixel-row
+      // fallback (~20x slower). Workspace coords make the draw origin (0,0).
+      if (!fis_.initScreen(op.x, y, op.w, op.h, 0x00)) return false;
+      uint8_t bpl = (op.w + 7) / 8;                 // bytes per line at workspace width
+      uint8_t rowsPerPkt = 32 / bpl; if (rowsPerPkt == 0) rowsPerPkt = 1;
+      uint8_t ok = 1;
+      for (int row = 0; row < op.h; row += rowsPerPkt) {
+        int rows = op.h - row < rowsPerPkt ? op.h - row : rowsPerPkt;
+        ok &= fis_.GraphicOut(0, (uint8_t)row, (uint16_t)(rows * bpl), buf + row * bpl, 2);
+        delay(2);
+      }
+      ok &= fis_.initScreen(0, 0, 64, 88, 0x00);    // workspace back to full screen
+      return ok != 0;
+    }
     return fis_.GraphicFromArray(op.x, y, op.w, op.h, buf, 2) != 0;
   }
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }

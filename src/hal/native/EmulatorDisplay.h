@@ -14,6 +14,7 @@ public:
   void drawText(uint8_t x, uint8_t y, uint8_t font, const char* text) override { rec_.text(x, y, font, text); }
   void drawTextOverlay(uint8_t x, uint8_t y, uint8_t font, uint8_t clearW, const char* text) override { rec_.text(x, y, font, text, clearW); }
   void drawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* data) override { rec_.bitmap(x, y, w, h, data); }
+  void fillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool lit) override { rec_.rect(x, y, w, h, lit); }
   void release() override { rec_.release(); }
 
   std::string toJson() const { return rec_.toJson(); }

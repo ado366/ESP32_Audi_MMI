@@ -35,6 +35,12 @@ public:
     for (int i = 0; i < bytes; ++i) { o.s.push_back(hex[data[i] >> 4]); o.s.push_back(hex[data[i] & 0xF]); }
     ops_.push_back(o);
   }
+  // Solid rectangle, filled lit or cleared dark. On the FIS this is a single
+  // 7-byte no-claim 0x53 command — vastly cheaper than bitmap data (f = lit).
+  void rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool lit) {
+    FrameOp o; o.t = 'r'; o.x = x; o.y = y; o.w = w; o.h = h; o.f = lit ? 1 : 0;
+    ops_.push_back(o);
+  }
 
   const std::string& mode() const { return mode_; }
   const std::string& top1() const { return top1_; }
@@ -51,6 +57,10 @@ public:
       if (o.t == 't')
         j += "{\"t\":\"text\",\"x\":" + std::to_string(o.x) + ",\"y\":" + std::to_string(o.y)
            + ",\"f\":" + std::to_string(o.f) + ",\"s\":\"" + esc(o.s) + "\"}";
+      else if (o.t == 'r')
+        j += "{\"t\":\"rect\",\"x\":" + std::to_string(o.x) + ",\"y\":" + std::to_string(o.y)
+           + ",\"w\":" + std::to_string(o.w) + ",\"h\":" + std::to_string(o.h)
+           + ",\"f\":" + std::to_string(o.f) + "}";
       else
         j += "{\"t\":\"bmp\",\"x\":" + std::to_string(o.x) + ",\"y\":" + std::to_string(o.y)
            + ",\"w\":" + std::to_string(o.w) + ",\"h\":" + std::to_string(o.h)
