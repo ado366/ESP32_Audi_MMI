@@ -326,7 +326,7 @@ void App::tick(uint32_t nowMs) {
   // hardware) at a slower cadence.
   if (isDiagScreen()) {
     uint32_t interval = (screen_ == Screen::DiagFaults) ? 400u
-                      : (screen_ == Screen::Speedo)     ? 250u    // FIS bitmap send is slow; don't outpace it
+                      : (screen_ == Screen::Speedo)     ? 150u    // per-digit cells are cheap (~2 pkts/digit)
                       : (screen_ == Screen::DiagBoost)  ? 250u    // rects are cheap, but no need for more
                       : (screen_ == Screen::DiagGraph)  ? 300u    // 64x64 plot = 512B/redraw; 150ms saturated
                       : 150u;                                     //   the bus and froze the loop in 140ms blocks
@@ -787,10 +787,19 @@ void App::renderDiag() {
     l1 = marquee(l1, kWin); l2 = marquee(l2, kWin);                                 // same font+window as home
     if (!l1.empty()) display_.drawText(0, 3,  kFontCentered, l1.c_str());           // standard font (like home), 3px top
     if (!l2.empty()) display_.drawText(0, 13, kFontCentered, l2.c_str());
-    // Small digit bitmap (car-proven size): a bigger one takes too long to send and (SPEEDO)
-    // starves the keepalive when speed changes fast -> cluster freezes.
-    auto bmp = SpeedoRenderer::render(spd, 64, 20);
-    display_.drawBitmap(0, 38, 64, 20, bmp.data());
+    // PER-DIGIT cells at fixed slots: only a changed digit re-sends (~2 packets
+    // via the narrow-workspace path), so digits can be BIGGER than the old
+    // whole-number bitmap (which starved the keepalive when speed changed fast).
+    {
+      char s[8]; std::snprintf(s, sizeof(s), "%3d", spd < 0 ? 0 : (spd > 999 ? 999 : spd));
+      const int dw = 16, dh = 28, gap = 4;
+      const int x0 = (64 - (3 * dw + 2 * gap)) / 2;   // = 4
+      for (int i = 0; i < 3; ++i) {
+        auto cell = SpeedoRenderer::digitCell(s[i], dw, dh, 3);
+        display_.drawBitmap(static_cast<uint8_t>(x0 + i * (dw + gap)), 34,
+                            static_cast<uint8_t>(dw), static_cast<uint8_t>(dh), cell.data());
+      }
+    }
     display_.drawText(44, 66, kFontCompressedLeft, "KM/H");
     return;
   }

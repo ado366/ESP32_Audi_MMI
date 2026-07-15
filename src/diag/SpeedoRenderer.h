@@ -37,6 +37,15 @@ struct SpeedoRenderer {
     if (m & 0x10) rect(b, w, h, cx,          midY, t, half + t);       // e
     if (m & 0x04) rect(b, w, h, cx + dw - t, midY, t, half + t);       // c
   }
+  // ONE digit cell as its own bitmap (fixed slot per digit on screen): the
+  // display differ then repaints only digits that changed — 88 -> 89 re-sends
+  // a single ~2-packet cell instead of the whole number. ' ' = blank cell.
+  static std::vector<uint8_t> digitCell(char d, int w, int h, int t) {
+    std::vector<uint8_t> b((static_cast<size_t>(w) * h + 7) / 8, 0);
+    digit(b, w, h, d, 0, 0, w, h, t);
+    return b;
+  }
+
   // Render `value` as big 7-seg digits, centered horizontally regardless of how
   // many digits (1/2/3) the number has.
   static std::vector<uint8_t> render(int value, int w, int h) {
