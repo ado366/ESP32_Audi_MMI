@@ -289,8 +289,13 @@ void App::tick(uint32_t nowMs) {
   // (phonebook, settings, ...), so you never get stranded in the menus while
   // driving. Live gauges (speedo/diagnostics) and any call are exempt — you want
   // those to stay put.
+  // menuOpen_ counts only when the menu is the VISIBLE surface: screens opened
+  // FROM the menu leave menuOpen_ true underneath (so Back returns to the menu),
+  // and that used to defeat the diag exemption — READ GROUP / GRAPH quietly
+  // closed 20s after the last input while you were watching live values.
   if (bt_.status().call == CallState::Idle &&
-      (menuOpen_ || (screen_ != Screen::None && !isDiagScreen())) &&
+      ((menuOpen_ && screen_ == Screen::None) ||
+       (screen_ != Screen::None && !isDiagScreen())) &&
       now_ - lastInputMs_ > kHomeTimeoutMs) {
     menuOpen_ = false; screen_ = Screen::None; dirty_ = true;
   }
