@@ -892,8 +892,10 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // Spin the compressor wheel above 1 bar (one blade step per second).
-    int spin = bar > 1.0f ? static_cast<int>((now_ / 1000u) % 3u) : 0;
+    // Spin the compressor wheel above 1 bar: one blade step per 500ms (2 fps —
+    // affordable again now the sprite rides the narrow workspace path and only
+    // rewrites its own 32px region, never the bars).
+    int spin = bar > 1.0f ? static_cast<int>((now_ / 500u) % 3u) : 0;
     // Rect-op gauge (see TurboGauge.h): a STATIC layer (compressor + all bar
     // outlines, 7 bands, sent once), the wheel sprite (narrow bitmap, redrawn
     // on spin), and one fixed-slot fillRect per bar INTERIOR — a bar toggle is
@@ -914,17 +916,24 @@ void App::renderDiag() {
                           static_cast<uint8_t>(rw), static_cast<uint8_t>(rh), i < lit);
       }
     }
-    // Readout as SPLIT FIELDS: the labels ("BAR", "%") are static ops drawn
-    // once; the two numbers are narrow overlay fields that rect-clear ONLY
-    // their own ~15px span before redrawing. A value change repaints just its
-    // field — no full-row blank, so no flashing (the labels never repaint).
+    // Readout as PER-CHARACTER FIELDS: the labels ("BAR", "%") are static ops
+    // drawn once, and every DIGIT is its own fixed-slot 5px field. The differ
+    // then repaints only the glyphs that actually changed — 88% -> 81% updates
+    // one digit; the '.' in the boost value never repaints at all.
     if (screen_ == Screen::DiagBoost) {
       char v1[8], v2[8];
-      std::snprintf(v1, sizeof(v1), "%.1f", bar);
-      std::snprintf(v2, sizeof(v2), "%3d", duty);
-      display_.drawTextOverlay(8,  24, kFontCompressedLeft, 15, v1);      // boost value
+      std::snprintf(v1, sizeof(v1), "%.1f", bar);   // always 3 chars: X.Y
+      std::snprintf(v2, sizeof(v2), "%3d", duty);   // always 3 chars, space-padded
+      auto chars = [&](uint8_t x0, const char* s) { // one overlay field per char
+        char c[2] = {0, 0};
+        for (int i = 0; s[i] && i < 3; ++i) {
+          c[0] = s[i];
+          display_.drawTextOverlay(static_cast<uint8_t>(x0 + i * 5), 24, kFontCompressedLeft, 5, c);
+        }
+      };
+      chars(8, v1);                                                       // boost digits
       display_.drawTextOverlay(26, 24, kFontCompressedLeft, 15, "BAR");   // static
-      display_.drawTextOverlay(42, 24, kFontCompressedLeft, 15, v2);      // duty value
+      chars(42, v2);                                                      // duty digits
       display_.drawTextOverlay(57, 24, kFontCompressedLeft, 6,  "%");     // static
     } else {
       display_.drawTextOverlay(0, 24, kFontCompressedCenter, 64, valStr.c_str());
