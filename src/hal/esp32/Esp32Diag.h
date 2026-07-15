@@ -49,6 +49,7 @@ public:
   void setTiming(int initBitMs, int interByteMs, int blockDelayMs) override {
     kwp_.setTiming(initBitMs, interByteMs, blockDelayMs);
   }
+  void stopReading() override { reqEcu_ = 0; reqGroup_ = 0; stopReq_ = true; }
 
 private:
   static void thunk(void* p) { static_cast<Esp32Diag*>(p)->taskLoop(); }
@@ -62,6 +63,11 @@ private:
 
   void taskLoop() {
     for (;;) {
+      if (stopReq_) {                    // leave the K-line idle off diag screens
+        stopReq_ = false;
+        if (kwp_.isConnected()) kwp_.disconnect();
+        connected_ = false; haveData_ = false;
+      }
       if (probeReq_) { probeReq_ = false; if (kwp_.isConnected()) kwp_.disconnect(); kwp_.probe(probeRx_, probeTx_); continue; }
       // Fault clear / read take priority and target their own ECU.
       if (clearReq_ || faultReq_) {
@@ -116,7 +122,7 @@ private:
   Group latest_;
   std::vector<Dtc> faults_;
   volatile uint8_t reqEcu_ = 0, reqGroup_ = 0, curEcu_ = 0, curGroup_ = 0, faultEcu_ = 0;
-  volatile bool connected_ = false, haveData_ = false;
+  volatile bool connected_ = false, haveData_ = false, stopReq_ = false;
   volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;
   volatile int  probeRx_ = -1, probeTx_ = -1;
   volatile uint32_t reads_ = 0;

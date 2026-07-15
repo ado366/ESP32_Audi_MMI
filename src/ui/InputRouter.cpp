@@ -37,7 +37,10 @@ Action InputRouter::resolve(Control c, Context ctx) {
     return Action::None;
   }
 
-  // --- Menu + Diagnostics screens: encoder navigates, console buttons select/back ---
+  // --- Menu + Diagnostics screens: the ENCODER navigates; everything else
+  // falls through to the idle mapping so audio controls (steering track
+  // skip, voice assistant, chords) keep working everywhere. Only the call
+  // contexts above truly override the steering buttons.
   if (ctx == Context::Menu || ctx == Context::Diagnostics) {
     switch (c) {
       case Control::EncoderCW:    return Action::ScrollDown;
@@ -45,13 +48,8 @@ Action InputRouter::resolve(Control c, Context ctx) {
       case Control::EncoderClick: return Action::Select;
       case Control::EncoderHold:  return Action::RootBack;
       case Control::Return:       return Action::Back;
-      case Control::Traffic:      return Action::JumpDiagnostics;
-      // Right steering can page the list too (alt. scroll)
-      case Control::SteerRightPlus:  return Action::ScrollDown;
-      case Control::SteerRightMinus: return Action::ScrollUp;
-      default: break;
+      default: break;             // fall through to the idle/media mapping
     }
-    return Action::None;
   }
 
   // --- Idle / NowPlaying: media + radio + shortcuts ---

@@ -22,6 +22,20 @@ enum class Control : uint8_t {
   SteerRightPlusHold,
 };
 
+// Short display name for a Control (BTN MON debug screen).
+inline const char* controlName(Control c) {
+  static const char* kNames[] = {
+    "-", "MENU", "RETURN", "NAV", "INFO", "TRAFFIC",
+    "MENU+RET", "MENU+NAV", "TRAF-REV", "INFO-REV",
+    "ENC CW", "ENC CCW", "ENC CLICK", "ENC HOLD",
+    "L+", "L-", "R+", "R-",
+    "L+R+", "L+R-", "L-R+", "L-R-",
+    "R+ HOLD",
+  };
+  unsigned i = static_cast<unsigned>(c);
+  return i < sizeof(kNames) / sizeof(kNames[0]) ? kNames[i] : "?";
+}
+
 // What is on screen right now — selects which binding applies.
 enum class Context : uint8_t {
   NowPlaying = 0, // idle / default root screen

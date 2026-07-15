@@ -67,6 +67,10 @@ public:
   virtual bool clearFaults(uint8_t ecuAddr) = 0;
   // Per-vehicle KWP1281 timing (Maxi-K Adaptation). Default no-op (emulator).
   virtual void setTiming(int initBitMs, int interByteMs, int blockDelayMs) {}
+  // No diag screen is showing: stop polling and drop the K-line connection —
+  // otherwise the task keeps reading/reconnecting in the background forever
+  // (observed churning during a phone call). Default no-op (emulator).
+  virtual void stopReading() {}
 };
 
 } // namespace mmi

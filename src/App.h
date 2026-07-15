@@ -146,6 +146,7 @@ private:
   std::string dialedName_, dialedNumber_;
   // Auto-return to Now-Playing after inactivity in a menu / transient screen.
   uint32_t lastInputMs_ = 0;
+  bool     wasDiag_ = false;   // edge-detect leaving diag screens (KWP idle stop)
   static constexpr uint32_t kHomeTimeoutMs = 20000;
   // Boot splash.
   uint32_t bootMs_ = 0;

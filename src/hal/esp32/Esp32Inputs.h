@@ -23,7 +23,14 @@ public:
     pinMode(cfg::PIN_ENC_A, INPUT_PULLUP);
     pinMode(cfg::PIN_ENC_B, INPUT_PULLUP);
     pinMode(cfg::PIN_ENC_BUTTON, INPUT_PULLUP);
-    lastEnc_ = (digitalRead(cfg::PIN_ENC_A) << 1) | digitalRead(cfg::PIN_ENC_B);
+    // Quadrature decoding is INTERRUPT-driven: the loop blocks for 10-70ms
+    // inside FIS writes, and polled decoding missed transitions — turning the
+    // encoder felt like it skipped detents / needed fast spinning to register.
+    // The ISR only accumulates; serviceEncoder() converts to detent events.
+    s_self = this;
+    isrLast_ = (digitalRead(cfg::PIN_ENC_A) << 1) | digitalRead(cfg::PIN_ENC_B);
+    attachInterrupt(digitalPinToInterrupt(cfg::PIN_ENC_A), encIsrThunk, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(cfg::PIN_ENC_B), encIsrThunk, CHANGE);
     // Deliberate boot gesture: encoder button held CONTINUOUSLY for ~1.5s at
     // power-on requests calibration. A brief tap won't do it; if it isn't held
     // at all we return immediately (no boot delay).
@@ -70,6 +77,10 @@ public:
       if (ks_[i] == Control::SteerRightPlus) {
         if (sw_->onPressAfter(i, kSteerHoldMs))        push(Control::SteerRightPlusHold);
         else if (sw_->onReleaseBefore(i, kSteerHoldMs)) push(Control::SteerRightPlus);
+      } else if (ks_[i] == Control::SteerLeftPlus || ks_[i] == Control::SteerLeftMinus) {
+        // Volume AUTO-REPEATS while held (v1 behaviour): one step on press,
+        // then a step every kVolRepeatMs after kVolDelayMs of holding.
+        if (sw_->onPress(i) || sw_->onPressAfter(i, kVolDelayMs, kVolRepeatMs)) push(ks_[i]);
       } else if (sw_->onPress(i)) {
         push(ks_[i]);
       }
@@ -123,7 +134,10 @@ private:
     b2_ = new AnalogMultiButton(cfg::PIN_BTN_CONSOLE_2, 5, v2_);
     sw_ = new AnalogMultiButton(cfg::PIN_BTN_STEERING,  8, vs_);
   }
-  void push(Control c, int8_t d = 0) { q_.push_back({c, d}); }
+  void push(Control c, int8_t d = 0) {
+    q_.push_back({c, d});
+    lastCtrl_ = c; ++ctrlCount_;        // BTN MON: last decoded control
+  }
 
   // ---- calibration capture sequence (covers every ladder slot) ----
   struct Step { uint8_t ladder; Control ctrl; const char* name; };
@@ -187,14 +201,23 @@ private:
     s.writeBlob(kk, kb);
   }
 
+  // ISR: accumulate quadrature transitions (defined out-of-line in
+  // Esp32Inputs.cpp — an IRAM_ATTR body inline in a header trips the Xtensa
+  // "literal placed after use" linker error). Kept tiny; decoding to detents
+  // happens in serviceEncoder() on the loop.
+  static void encIsrThunk();
+
   void serviceEncoder() {
-    static const int8_t tbl[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
-    uint8_t s = (digitalRead(cfg::PIN_ENC_A) << 1) | digitalRead(cfg::PIN_ENC_B);
-    if (s != lastEnc_) {
-      accum_ += tbl[(lastEnc_ << 2) | s];
-      lastEnc_ = s;
-      if (accum_ >= 4)  { push(Control::EncoderCW,  +1); ++encPos_; accum_ = 0; }
-      else if (accum_ <= -4) { push(Control::EncoderCW, -1); --encPos_; accum_ = 0; }
+    // Drain whole detents (4 transitions each) from the ISR accumulator as ONE
+    // event carrying the step count — a fast spin arrives as e.g. delta=3.
+    noInterrupts();
+    int acc = isrAccum_;
+    int steps = acc / 4;
+    isrAccum_ = acc - steps * 4;       // keep the sub-detent remainder
+    interrupts();
+    if (steps != 0) {
+      push(Control::EncoderCW, (int8_t)(steps > 127 ? 127 : steps < -128 ? -128 : steps));
+      encPos_ += steps;
     }
     bool pressed = digitalRead(cfg::PIN_ENC_BUTTON) == LOW;
     uint32_t now = millis();
@@ -207,9 +230,12 @@ private:
 public:
   void attachStorage(IStorage* s) { storage_ = s; } // so finalize can persist
 
+  const char* lastControlName() const override { return controlName(lastCtrl_); }
+  uint16_t    controlCount() const override { return ctrlCount_; }
+
   bool encoderDebug(EncoderDebug& out) const override {
     out.pos = encPos_;
-    out.a = lastEnc_ & 0x02; out.b = lastEnc_ & 0x01;   // raw quadrature levels
+    out.a = isrLast_ & 0x02; out.b = isrLast_ & 0x01;   // raw quadrature levels
     out.pressed = wasPressed_;
     out.clicks = encClicks_; out.holds = encHolds_;
     return true;
@@ -219,16 +245,21 @@ private:
   static constexpr uint32_t kHoldMs = 3000;     // runtime long-press -> open menu
   static constexpr uint32_t kSteerHoldMs = 600; // steering Right+ hold -> voice assistant
   static constexpr uint32_t kBootHoldMs = 700;  // sustained hold at boot -> calibration
+  static constexpr uint32_t kVolDelayMs = 400;  // volume hold: delay before auto-repeat
+  static constexpr uint32_t kVolRepeatMs = 150; // volume hold: repeat rate
   int v1_[5], v2_[5], vs_[8];
   Control k1_[5], k2_[5], ks_[8];
   AnalogMultiButton *b1_ = nullptr, *b2_ = nullptr, *sw_ = nullptr;
   IStorage* storage_ = nullptr;
   int raw_[3] = {0, 0, 0};
   std::deque<InputEvent> q_;
-  uint8_t lastEnc_ = 0;
-  int accum_ = 0;
+  static inline Esp32Inputs* s_self = nullptr;  // ISR -> instance (single instance)
+  volatile int isrAccum_ = 0;           // quadrature transitions from the ISR
+  volatile uint8_t isrLast_ = 0;
   int encPos_ = 0;                      // accumulated detents (encoder debug screen)
   uint16_t encClicks_ = 0, encHolds_ = 0;
+  Control lastCtrl_ = Control::None;    // BTN MON: last decoded control
+  uint16_t ctrlCount_ = 0;
   bool wasPressed_ = false, holdSent_ = false;
   uint32_t pressStart_ = 0;
   // calibration state

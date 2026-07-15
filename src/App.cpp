@@ -314,6 +314,14 @@ void App::tick(uint32_t nowMs) {
     }
   }
 
+  // Leaving the diag screens: idle the KWP task and drop the K-line, so it
+  // doesn't keep reading/reconnecting in the background (e.g. during a call).
+  {
+    bool diagNow = isDiagScreen();
+    if (!diagNow && wasDiag_) diag_.stopReading();
+    wasDiag_ = diagNow;
+  }
+
   // Live diagnostics polling. Groups refresh fast; faults are read (async on
   // hardware) at a slower cadence.
   if (isDiagScreen()) {
@@ -405,6 +413,15 @@ void App::handle(Action a) {
       readEcu_ = ecu::Engine; readGroup_ = 11;
       openScreen(Screen::DiagBoost);
       return;
+    // AUDIO is global too: volume/track/voice/source must work on every screen
+    // (most screens' handleScreen consumes all actions). The call contexts never
+    // produce these actions (InputRouter overrides the buttons there).
+    case Action::VolumeUp:   if (radio_ && radio_->hasRemote()) radio_->volumeUp();   else bt_.volumeUp();   return;
+    case Action::VolumeDown: if (radio_ && radio_->hasRemote()) radio_->volumeDown(); else bt_.volumeDown(); return;
+    case Action::TrackNext:  mediaStep(+1); return;
+    case Action::TrackPrev:  mediaStep(-1); return;
+    case Action::RadioSource: if (radio_ && radio_->hasRemote()) radio_->sourceMode(); return;
+    case Action::VoiceDial:  bt_.voiceDial(); dirty_ = true; return;
     default: break;
   }
 
@@ -423,14 +440,7 @@ void App::handle(Action a) {
     case Action::RootBack:
       if (menuOpen_) { menu_.toRoot(); dirty_ = true; }
       break;
-    // Volume always drives the head unit (it's the amplifier); fall back to the
-    // BC127's own volume only when no radio remote is wired (e.g. the emulator).
-    case Action::VolumeUp:   if (radio_ && radio_->hasRemote()) radio_->volumeUp();   else bt_.volumeUp();   break;
-    case Action::VolumeDown: if (radio_ && radio_->hasRemote()) radio_->volumeDown(); else bt_.volumeDown(); break;
-    case Action::TrackNext:  mediaStep(+1); break;
-    case Action::TrackPrev:  mediaStep(-1); break;
-    case Action::RadioSource: if (radio_ && radio_->hasRemote()) radio_->sourceMode(); break;
-    case Action::VoiceDial:  bt_.voiceDial(); dirty_ = true; break;
+    // (Volume/track/voice/source are handled in the GLOBAL switch above.)
     case Action::PlayPause:  bt_.playPause();  break;
     case Action::CallAnswer: bt_.callAnswer(); dirty_ = true; break;
     case Action::CallReject: bt_.callReject(); dirty_ = true; break;
@@ -1110,6 +1120,11 @@ void App::renderScreen() {
     std::snprintf(l, sizeof(l), "CON1 %d", inputs_.rawLadder(0)); display_.drawText(0, 20, kFontCompressedLeft, l);
     std::snprintf(l, sizeof(l), "CON2 %d", inputs_.rawLadder(1)); display_.drawText(0, 32, kFontCompressedLeft, l);
     std::snprintf(l, sizeof(l), "STEER %d", inputs_.rawLadder(2)); display_.drawText(0, 44, kFontCompressedLeft, l);
+    // Last DECODED control: if pressing a button moves the raw value above but
+    // this line never changes, the thresholds don't match — run CALIBRATE.
+    std::snprintf(l, sizeof(l), "DEC %s #%u", inputs_.lastControlName(),
+                  static_cast<unsigned>(inputs_.controlCount()));
+    display_.drawText(0, 58, kFontCompressedLeft, l);
     return;
   }
   if (screen_ == Screen::EncoderMonitor) {

@@ -17,6 +17,12 @@ public:
   // for the Button-Monitor / calibration screen. -1 if not applicable (native).
   virtual int rawLadder(int ladder) const { (void)ladder; return -1; }
 
+  // Last DECODED control (name + how many decoded so far) for the BTN MON
+  // screen — distinguishes "ADC moves but no press decodes" (thresholds wrong,
+  // needs calibration) from "decodes but the action goes nowhere".
+  virtual const char* lastControlName() const { return "-"; }
+  virtual uint16_t    controlCount() const { return 0; }
+
   // Live encoder diagnostics for the ENCODER debug screen. Returns false when
   // not available (native emulator).
   struct EncoderDebug {
