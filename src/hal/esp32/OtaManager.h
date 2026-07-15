@@ -82,6 +82,18 @@ public:
       if (kwpTest_) kwpTest_((uint8_t)ecu, (uint8_t)grp);
       server_.send(200, "text/plain", "connecting; read /kwpdbg");
     });
+    // FIS sub-rect probe (TLBFISLib no-claim 0x53 experiment): ?x=&y=&w=&h=&m=
+    // m=3 fills the rect lit, m=2 clears it dark, m=0 workspace-move only.
+    server_.on("/fisrect", HTTP_GET, [this]() {
+      if (!authed()) return;
+      uint8_t x = server_.arg("x").toInt(), y = server_.arg("y").toInt();
+      uint8_t w = server_.hasArg("w") ? server_.arg("w").toInt() : 8;
+      uint8_t h = server_.hasArg("h") ? server_.arg("h").toInt() : 8;
+      uint8_t m = server_.hasArg("m") ? (uint8_t)strtol(server_.arg("m").c_str(), nullptr, 16) : 0x03;
+      char r[40];
+      snprintf(r, sizeof(r), "ok=%d (bit0=rect bit1=reset)", fisRect_ ? fisRect_(x, y, w, h, m) : -1);
+      server_.send(200, "text/plain", r);
+    });
     // Look up a fault-code description (?code=<hex>) — verifies the SPIFFS DB.
     server_.on("/desc", HTTP_GET, [this]() {
       uint16_t code = (uint16_t)strtol(server_.arg("code").c_str(), nullptr, 16);
@@ -142,6 +154,7 @@ public:
                        std::function<std::string()> log) { bcSend_ = std::move(send); bcLog_ = std::move(log); }
   void setKwpLog(std::function<std::string()> f) { kwpLog_ = std::move(f); }
   void setKwpProbe(std::function<void(int,int)> f) { kwpProbe_ = std::move(f); }
+  void setFisRect(std::function<int(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t)> f) { fisRect_ = std::move(f); }
   void setKwpTest(std::function<void(uint8_t,uint8_t)> f) { kwpTest_ = std::move(f); }
   // Browser control/debug UI: state = display frame + BT json; sink injects inputs.
   void setControlHooks(std::function<std::string()> state,
@@ -212,6 +225,7 @@ private:
   std::function<std::string()> bcLog_;
   std::function<std::string()> kwpLog_;
   std::function<void(int,int)> kwpProbe_;
+  std::function<int(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t)> fisRect_;
   std::function<void(uint8_t,uint8_t)> kwpTest_;
   std::function<std::string()> ctrlState_;
   std::function<void(Control, int)> ctrlSink_;

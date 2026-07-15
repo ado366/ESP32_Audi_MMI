@@ -53,6 +53,18 @@ public:
   std::string toJson() const { return rec_.toJson(); }
   uint32_t writeFails() const { return writeFails_; }   // count of dropped FIS writes (diagnostics)
 
+  // PROBE (bench experiment, TLBFISLib finding): 0x53 with the claim bit CLEAR.
+  // mode 0x02/0x03 = clear/fill a sub-rect (dark/lit) without re-claiming the
+  // page; 0x00 = move the workspace only. If this cluster accepts it, a bar
+  // toggle costs 2 tiny packets instead of ~450 bitmap bytes. Returns bit0 =
+  // rect cmd ACKed, bit1 = workspace-reset ACKed.
+  uint8_t probeRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t mode) {
+    uint8_t ok1 = fis_.initScreen(x, y, w, h, mode);
+    delay(3);
+    uint8_t ok2 = fis_.initScreen(0, 0, 64, 88, 0x00);  // workspace back to full, no clear
+    return (ok1 ? 1 : 0) | (ok2 ? 2 : 0);
+  }
+
   // Decide what (if anything) to enqueue for the current recorded frame.
   void flush() {
     if (rec_.mode() == "top") {
