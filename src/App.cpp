@@ -319,8 +319,9 @@ void App::tick(uint32_t nowMs) {
   if (isDiagScreen()) {
     uint32_t interval = (screen_ == Screen::DiagFaults) ? 400u
                       : (screen_ == Screen::Speedo)     ? 250u    // FIS bitmap send is slow; don't outpace it
-                      : (screen_ == Screen::DiagBoost)  ? 250u    // draws turbo + bar bitmaps; same care as speedo
-                      : 150u;
+                      : (screen_ == Screen::DiagBoost)  ? 250u    // rects are cheap, but no need for more
+                      : (screen_ == Screen::DiagGraph)  ? 300u    // 64x64 plot = 512B/redraw; 150ms saturated
+                      : 150u;                                     //   the bus and froze the loop in 140ms blocks
     if (now_ - lastSample_ > interval) {
       lastSample_ = now_;
       if (screen_ == Screen::DiagFaults) { if (diag_.readFaults(readEcu_, faults_)) faultsLoaded_ = true; }
@@ -633,7 +634,7 @@ void App::finalizeName() {
 
 void App::openScreen(Screen s) {
   screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0; group_.count = 0;  // no stale values
-  graph2_.clear();
+  graph2_.clear(); graphHdr_.clear(); graphHdrMs_ = 0;
   if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); diag_.readFaults(readEcu_, faults_); }
   dirty_ = true;
 }
@@ -965,17 +966,27 @@ void App::renderDiag() {
     if (screen_ == Screen::DiagGraph) {
       // Header: group + which value(s) + live reading. SEL cycles the value,
       // RETURN toggles the dotted second trace (the next value in the group).
+      // The live value is rate-limited to 1s — a header repaint is a full-row
+      // clear + text, and re-sending it every sample added blink + bus load.
       int vi = graphVal_;
       Measurement m = vi < group_.count ? group_.values[vi] : Measurement{};
       int v2 = group_.count > 1 ? (vi + 1) % group_.count : vi;
       if (dual) std::snprintf(l, sizeof(l), "G%u V%d+%d %s", static_cast<unsigned>(readGroup_), vi + 1, v2 + 1, fmt(m).c_str());
       else      std::snprintf(l, sizeof(l), "G%u V%d %s",   static_cast<unsigned>(readGroup_), vi + 1, fmt(m).c_str());
+      if (graphHdr_.empty() || (l != graphHdr_ && now_ - graphHdrMs_ >= 1000)) {
+        graphHdr_ = l; graphHdrMs_ = now_;
+      }
+      std::snprintf(l, sizeof(l), "%s", graphHdr_.c_str());
     } else {
       Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
       std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
     }
     display_.drawText(0, 0, kFontCompressedLeft, l);
-    display_.drawBitmap(0, kGaugeTop, kGraphW, 64, bmp.data());
+    // Two 64x32 ops instead of one 64x64: halves the blocking time per
+    // service() call (~70ms vs ~140ms) and a dropped packet retries only
+    // half the plot — the single big op froze the whole loop at times.
+    display_.drawBitmap(0, kGaugeTop,      kGraphW, 32, bmp.data());
+    display_.drawBitmap(0, kGaugeTop + 32, kGraphW, 32, bmp.data() + (kGraphW / 8) * 32);
     return;
   }
 
