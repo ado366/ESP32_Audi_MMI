@@ -924,16 +924,17 @@ void App::renderDiag() {
       char v1[8], v2[8];
       std::snprintf(v1, sizeof(v1), "%.1f", bar);   // always 3 chars: X.Y
       std::snprintf(v2, sizeof(v2), "%3d", duty);   // always 3 chars, space-padded
-      auto chars = [&](uint8_t x0, const char* s) { // one overlay field per char
-        char c[2] = {0, 0};
-        for (int i = 0; s[i] && i < 3; ++i) {
-          c[0] = s[i];
-          display_.drawTextOverlay(static_cast<uint8_t>(x0 + i * 5), 24, kFontCompressedLeft, 5, c);
-        }
-      };
-      chars(8, v1);                                                       // boost digits
+      char c[2] = {0, 0};
+      // Boost X.Y with a NARROW 3px cell for the '.' (its glyph is ~2px; a full
+      // 5px digit cell left a weird gap between the dot and the tenths digit).
+      c[0] = v1[0]; display_.drawTextOverlay(8,  24, kFontCompressedLeft, 5, c);  // integer digit
+      c[0] = v1[1]; display_.drawTextOverlay(13, 24, kFontCompressedLeft, 3, c);  // '.' (static)
+      c[0] = v1[2]; display_.drawTextOverlay(16, 24, kFontCompressedLeft, 5, c);  // tenths digit
       display_.drawTextOverlay(26, 24, kFontCompressedLeft, 15, "BAR");   // static
-      chars(42, v2);                                                      // duty digits
+      for (int i = 0; i < 3; ++i) {                                       // duty digits, 5px cells
+        c[0] = v2[i];
+        display_.drawTextOverlay(static_cast<uint8_t>(42 + i * 5), 24, kFontCompressedLeft, 5, c);
+      }
       display_.drawTextOverlay(57, 24, kFontCompressedLeft, 6,  "%");     // static
     } else {
       display_.drawTextOverlay(0, 24, kFontCompressedCenter, 64, valStr.c_str());
