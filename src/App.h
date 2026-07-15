@@ -105,8 +105,6 @@ private:
   std::vector<float> graph2_;         // second series (dual-trace graph, dotted)
   int                graphVal_ = 0;   // which group value the graph plots (0..3)
   bool               graphDual_ = false; // also plot the NEXT value as a dotted trace
-  std::string        readoutStr_;     // boost readout, rate-limited (text updates blink)
-  uint32_t           readoutMs_ = 0;
   int                diagPresetIdx_ = 0;
   uint8_t            readEcu_ = ecu::Engine;
   uint8_t            readGroup_ = 2;

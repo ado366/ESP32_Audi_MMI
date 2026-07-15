@@ -208,15 +208,25 @@ private:
     // (y27..75) so the emulator stays correct.
     uint8_t y = (graphicsTop_ && op.y >= kHalfTop) ? (uint8_t)(op.y - kHalfTop) : op.y;
     if (op.t == 't') {
-      // Overwrite the whole 64x7 row background first, in REPLACE mode (graphics
-      // mode 2, not XOR): 0xFF = lit bar for a highlighted row, 0x00 = blank
-      // otherwise. This is authoritative — it wipes whatever was there (old text,
-      // a dropped/half-drawn row), so redrawing a row REPAIRS it; no XOR erase, no
-      // desync. Then XOR the text: dark on a lit bg (inverse), lit on a dark bg.
+      // FIELD overlay (op.w set, not highlighted): clear ONLY this text's span,
+      // starting at ITS x, with a no-claim 0x53 rect (2 tiny commands). Sibling
+      // fields / static labels on the same row are untouched, so a live value
+      // can update without blanking the whole row (the source of readout flash).
+      if (op.w && !(op.f & kFontHighlight)) {
+        uint8_t clrW = op.w > (uint8_t)(64 - op.x) ? (uint8_t)(64 - op.x) : op.w;
+        if (!fis_.initScreen(op.x, y, clrW, 7, 0x02)) return false;   // clear the field dark
+        delayMicroseconds(2000);
+        if (!fis_.initScreen(0, 0, 64, 88, 0x00)) return false;      // workspace back
+        delayMicroseconds(3000);                                      // settle before text
+        return fis_.sendStringFS(op.x, y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
+      }
+      // Full row: overwrite the whole 64x7 background first, in REPLACE mode
+      // (graphics mode 2, not XOR): 0xFF = lit bar for a highlighted row, 0x00 =
+      // blank otherwise. This is authoritative — it wipes whatever was there (old
+      // text, a dropped/half-drawn row), so redrawing a row REPAIRS it; no XOR
+      // erase, no desync. Then XOR the text: dark on lit (inverse), lit on dark.
       uint8_t bg[56]; memset(bg, (op.f & kFontHighlight) ? 0xFF : 0x00, sizeof(bg));
-      uint8_t clrW = op.w ? (uint8_t)((op.w + 7) & ~7) : 64; // overlay: clear only this width (mult of 8)
-      if (clrW == 0 || clrW > 64) clrW = 64;
-      if (!fis_.GraphicFromArray(0, y, clrW, 7, bg, 2)) return false; // 2 = replace mode
+      if (!fis_.GraphicFromArray(0, y, 64, 7, bg, 2)) return false; // 2 = replace mode
       delayMicroseconds(5000);                               // settle before text
       return fis_.sendStringFS(op.x, y, (uint8_t)(op.f & ~kFontHighlight), String(op.s.c_str())) != 0;
     }

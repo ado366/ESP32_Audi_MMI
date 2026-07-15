@@ -633,7 +633,7 @@ void App::finalizeName() {
 
 void App::openScreen(Screen s) {
   screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0; group_.count = 0;  // no stale values
-  graph2_.clear(); readoutStr_.clear(); readoutMs_ = 0;
+  graph2_.clear();
   if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); diag_.readFaults(readEcu_, faults_); }
   dirty_ = true;
 }
@@ -865,13 +865,13 @@ void App::renderDiag() {
       if (!l1.empty()) display_.drawText(0, 3,  kFontCentered, l1.c_str());           // standard font (like home), 3px top
       if (!l2.empty()) display_.drawText(0, 13, kFontCentered, l2.c_str()); }
 
-    float bar, mx = 2.5f; std::string valStr;
+    float bar, mx = 2.5f; std::string valStr; int duty = 0;
     if (screen_ == Screen::DiagBoost) {
       // Hardcoded: Engine (0x01) group 11 field 3 (index 2) = boost pressure in
       // mbar -> bar; field 4 (index 3) = turbo duty cycle %.
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
       bar = m.value / 1000.0f;
-      int duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
+      duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
       if (group_.count <= 2) {                   // DEMO when there's no live data (KWP not connected):
         // The DATA moves gradually (20s triangle 0 -> 2 bar -> 0) but each bar
         // itself snaps empty <-> full (bars are binary in compose()). The pace
@@ -883,7 +883,6 @@ void App::renderDiag() {
         duty = static_cast<int>(bar / 2.0f * 100.f + 0.5f);
         mx   = 2.0f;                             // demo full-scale = 2.0: ALL 16 bars lit at the peak
       }                                          // (live data keeps the 2.5 scale)
-      char v[24]; std::snprintf(v, sizeof(v), "%.1f BAR %d%%", bar, duty); valStr = v;
     } else {                                     // favourite preset keeps its own scale/value
       float pmn = 0;
       if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -915,17 +914,21 @@ void App::renderDiag() {
                           static_cast<uint8_t>(rw), static_cast<uint8_t>(rh), i < lit);
       }
     }
-    // Boost + duty readout, CENTERED, full-width row. Bars top out at y32 so
-    // nothing lives beside it any more — a full 64px clear rides 2 jumbo packets
-    // (the old 56px overlay clear was 7 row-packets, and a dropped first packet
-    // showed as the readout's top getting trimmed).
-    // RATE-LIMITED to 1s: a text update is a two-phase bg-clear + XOR draw, so
-    // the row blanks for ~25ms — updating it every 250ms tick read as flashing.
-    if (readoutStr_.empty() ||
-        (valStr != readoutStr_ && now_ - readoutMs_ >= 1000)) {
-      readoutStr_ = valStr; readoutMs_ = now_;
+    // Readout as SPLIT FIELDS: the labels ("BAR", "%") are static ops drawn
+    // once; the two numbers are narrow overlay fields that rect-clear ONLY
+    // their own ~15px span before redrawing. A value change repaints just its
+    // field — no full-row blank, so no flashing (the labels never repaint).
+    if (screen_ == Screen::DiagBoost) {
+      char v1[8], v2[8];
+      std::snprintf(v1, sizeof(v1), "%.1f", bar);
+      std::snprintf(v2, sizeof(v2), "%3d", duty);
+      display_.drawTextOverlay(8,  24, kFontCompressedLeft, 15, v1);      // boost value
+      display_.drawTextOverlay(26, 24, kFontCompressedLeft, 15, "BAR");   // static
+      display_.drawTextOverlay(42, 24, kFontCompressedLeft, 15, v2);      // duty value
+      display_.drawTextOverlay(57, 24, kFontCompressedLeft, 6,  "%");     // static
+    } else {
+      display_.drawTextOverlay(0, 24, kFontCompressedCenter, 64, valStr.c_str());
     }
-    display_.drawText(0, 24, kFontCompressedCenter, readoutStr_.c_str());
     return;
   }
 
