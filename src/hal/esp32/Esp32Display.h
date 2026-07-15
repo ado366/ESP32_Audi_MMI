@@ -109,7 +109,15 @@ public:
       lastWrite_ = now; haveWritten_ = true;
       return;
     }
-    if (haveWritten_ && (uint32_t)(now - lastWrite_) < kGapMs) return;
+    // Bitmap->bitmap draws can run nearly back-to-back: GraphicFromArray already
+    // spaces its own jumbo packets by only 2ms and the cluster keeps up. The full
+    // kGapMs is for TEXT rows (the cluster drops them when crowded). Tightening
+    // this makes a multi-band gauge change paint as one quick pop instead of a
+    // visible top-to-bottom wipe.
+    uint32_t gap = kGapMs;
+    if (!q_.empty() && lastWasBitmap_ && q_.front().kind == Cmd::Draw &&
+        q_.front().op.t != 't') gap = kGapBitmapMs;
+    if (haveWritten_ && (uint32_t)(now - lastWrite_) < gap) return;
     Cmd c = q_.front();
     bool pop = true;
     switch (c.kind) {
@@ -140,6 +148,7 @@ public:
         } else opFails_ = 0;
         break;
     }
+    lastWasBitmap_ = (c.kind == Cmd::Draw && c.op.t != 't');
     if (pop) { q_.pop_front(); if (q_.empty()) redrawFails_ = 0; } // page drained cleanly
     // Measure the gap from the END of the (blocking) write: the cluster needs the
     // full kGapMs to render each row before the next arrives, or it drops rows
@@ -212,6 +221,7 @@ private:
   static uint8_t hexv(char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : 0; }
 
   static constexpr uint32_t kGapMs       = 14;   // gap AFTER each FIS write so the cluster can render it
+  static constexpr uint32_t kGapBitmapMs = 3;    // bitmap->bitmap gap (matches jumbo intra-op spacing)
   static constexpr uint32_t kKeepAliveMs = 900;  // idle keepalive cadence (VAGFISPages value)
   static constexpr uint32_t kRedrawMinMs = 90;   // cap full-redraw rate during fast scroll
   static constexpr uint8_t  kMaxRestarts = 6;    // bound page-redraw restarts on write failure
@@ -225,6 +235,7 @@ private:
   std::deque<Cmd> q_;
   uint32_t lastWrite_ = 0, lastRedraw_ = 0;
   bool graphics_ = false;           // bus currently in graphics mode
+  bool lastWasBitmap_ = false;      // last sent cmd was a bitmap draw (for the short gap)
   uint8_t graphicsTop_ = 0;         // >0 => use the fixed lower HALFSCREEN region
   // Lower graphics band (infrastructure; gauges currently use full-screen). A 64px
   // band (y24..88) was verified accepted by this cluster (covers the bottom).

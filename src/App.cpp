@@ -633,6 +633,7 @@ void App::finalizeName() {
 
 void App::openScreen(Screen s) {
   screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0; group_.count = 0;  // no stale values
+  graph2_.clear(); readoutStr_.clear(); readoutMs_ = 0;
   if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); diag_.readFaults(readEcu_, faults_); }
   dirty_ = true;
 }
@@ -892,10 +893,10 @@ void App::renderDiag() {
       bar = m.value - pmn; valStr = fmt(m);
     }
     float frac = mx > 0 ? bar / mx : 0.f;
-    // Spin the compressor wheel above 1 bar: one blade step per 500ms, dirtying
-    // only the 3 bands the wheel spans (~6 jumbo packets ≈ 100ms of bus). At
-    // 250ms the spin alone kept the FIS ~60% busy and the UI felt frozen.
-    int spin = bar > 1.0f ? static_cast<int>((now_ / 500u) % 3u) : 0;
+    // Spin the compressor wheel above 1 bar: one blade step per second. Faster
+    // steps repaint the wheel bands so often the compressor reads as flashing
+    // (and at 250ms the spin alone kept the FIS ~60% busy).
+    int spin = bar > 1.0f ? static_cast<int>((now_ / 1000u) % 3u) : 0;
     // The gauge (compressor + bars) is ONE 64-wide composition drawn as 64x8
     // bands: only 64-wide bitmaps ride the FIS 32-byte jumbo packets (4 rows
     // per packet); anything narrower degrades to one packet per pixel row and
@@ -911,7 +912,13 @@ void App::renderDiag() {
     // nothing lives beside it any more — a full 64px clear rides 2 jumbo packets
     // (the old 56px overlay clear was 7 row-packets, and a dropped first packet
     // showed as the readout's top getting trimmed).
-    display_.drawText(0, 24, kFontCompressedCenter, valStr.c_str());
+    // RATE-LIMITED to 1s: a text update is a two-phase bg-clear + XOR draw, so
+    // the row blanks for ~25ms — updating it every 250ms tick read as flashing.
+    if (readoutStr_.empty() ||
+        (valStr != readoutStr_ && now_ - readoutMs_ >= 1000)) {
+      readoutStr_ = valStr; readoutMs_ = now_;
+    }
+    display_.drawText(0, 24, kFontCompressedCenter, readoutStr_.c_str());
     return;
   }
 
