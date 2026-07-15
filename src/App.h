@@ -27,6 +27,9 @@ public:
   void tick(uint32_t nowMs);  // call from loop()/main loop with a millisecond clock
   Context context() const { return ctx_; }
   bool menuOpen() const { return menuOpen_; }
+  // Last few dispatched actions ("<id>@<ms>", newest last) — /status telemetry to
+  // catch phantom inputs (spontaneous screen exits / "hangs" with no user input).
+  std::string actionTrace() const;
 
   // Seed points for the host (emulator/firmware) to populate data.
   BluetoothManager& bluetooth() { return btMgr_; }
@@ -129,6 +132,10 @@ private:
   bool     dirty_ = true;
   uint32_t now_ = 0;
   bool     scrolling_ = false;
+  // Action-trace ring for /status (see actionTrace()).
+  struct ActRec { uint32_t ms = 0; Action a = Action::None; };
+  ActRec   actRing_[8];
+  int      actIdx_ = 0;
   // Call UI state: who we dialled (for the outgoing screen), call-start time (for
   // the in-call timer), and the last CallState seen (to detect transitions).
   CallState   prevCall_ = CallState::Idle;

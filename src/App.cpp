@@ -266,6 +266,9 @@ void App::tick(uint32_t nowMs) {
   // are dropped; every other action passes straight through.
   auto dispatch = [&](Action a) {
     if ((a == Action::ScrollUp || a == Action::ScrollDown) && !navReady()) return;
+    if (a != Action::None) {                        // trace for /status phantom-input hunting
+      actRing_[actIdx_ % 8] = {now_, a}; ++actIdx_;
+    }
     handle(a);
   };
 
@@ -331,6 +334,30 @@ void App::tick(uint32_t nowMs) {
 
   if (scrolling_) dirty_ = true;
   if (dirty_) render();
+}
+
+// Newest-last "<name>@<ms>" list of recent dispatched actions. Telemetry for
+// hunting phantom inputs: if a screen exits with no user input, the trace shows
+// which action did it (and its timestamp correlates with the ladder/BT state).
+std::string App::actionTrace() const {
+  static const char* kNames[] = {
+    "none","vol+","vol-","next","prev","play","radiosrc","voice",
+    "menu","up","down","sel","back","rootback",
+    "answer","reject","end",
+    "traffic","home","info","turbo","assign"
+  };
+  std::string out;
+  for (int i = 0; i < 8; ++i) {
+    const ActRec& r = actRing_[(actIdx_ + i) % 8];    // oldest -> newest
+    if (r.a == Action::None && r.ms == 0) continue;
+    int id = static_cast<int>(r.a);
+    char b[32];
+    std::snprintf(b, sizeof(b), "%s%s@%u", out.empty() ? "" : " ",
+                  id < static_cast<int>(sizeof(kNames)/sizeof(kNames[0])) ? kNames[id] : "?",
+                  static_cast<unsigned>(r.ms));
+    out += b;
+  }
+  return out;
 }
 
 std::string App::marquee(const std::string& s, int width) const {

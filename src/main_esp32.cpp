@@ -79,11 +79,11 @@ void setup() {
     };
     std::string dev = san(s.activeDeviceName.c_str()), title = san(s.title.c_str());
     std::string rl1 = san(radio.line1()), rl2 = san(radio.line2());
-    char b[400];
+    char b[520];
     snprintf(b, sizeof(b),
       "{\"up_s\":%lu,\"heap\":%u,\"link\":%s,\"dev\":\"%s\",\"play\":%s,\"call\":%d,"
       "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"cd\":%s,\"rl1\":\"%s\",\"rl2\":\"%s\","
-      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d}",
+      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d,\"acts\":\"%s\"}",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
       s.linked ? "true" : "false", dev.c_str(), s.playing ? "true" : "false",
       (int)s.call, s.scoOpen ? "true" : "false", title.c_str(),
@@ -91,7 +91,8 @@ void setup() {
       radio.cdMode() ? "true" : "false", rl1.c_str(), rl2.c_str(),
       (unsigned long)diag.readCount(),
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
-      app ? (int)app->context() : -1);
+      app ? (int)app->context() : -1,
+      app ? app->actionTrace().c_str() : "");   // recent actions: catch phantom inputs
     return std::string(b);
   });
   ota.setBc127Console([](const std::string& c) { bt.sendCommand(c); },
