@@ -957,7 +957,9 @@ void App::renderDiag() {
       float pad = (mx - mn) * 0.1f; if (pad < 1.f) pad = 1.f;   // margin; avoid zero range
       mn -= pad; mx += pad;
     }
-    auto bmp = GraphRenderer::render(graph_, mn, mx, kGraphW, 48, g1, g2,
+    // Plot fills the BOTTOM 2/3 of the screen (y24..87, full width) — the same
+    // band the gauges use; previously 48 rows at y16 left the bottom quarter dark.
+    auto bmp = GraphRenderer::render(graph_, mn, mx, kGraphW, 64, g1, g2,
                                      dual ? &graph2_ : nullptr);
     display_.beginFullScreen(true);
     if (screen_ == Screen::DiagGraph) {
@@ -973,7 +975,7 @@ void App::renderDiag() {
       std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
     }
     display_.drawText(0, 0, kFontCompressedLeft, l);
-    display_.drawBitmap(0, 16, kGraphW, 48, bmp.data());
+    display_.drawBitmap(0, kGaugeTop, kGraphW, 64, bmp.data());
     return;
   }
 
