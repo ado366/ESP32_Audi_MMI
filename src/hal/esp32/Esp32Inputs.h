@@ -48,15 +48,21 @@ public:
   }
 
   void loadThresholds(const IStorage& s) {
-    loadLadder(s, "cal.v1", "cal.k1", v1_, k1_, 5);
-    loadLadder(s, "cal.v2", "cal.k2", v2_, k2_, 5);
-    loadLadder(s, "cal.vs", "cal.ks", vs_, ks_, 8);
+    // Slot counts may be smaller than the defaults after a partial calibration
+    // (skipped chords drop out of the map). Stored counts win; default = full.
+    n1_ = clampN(s.getInt("cal.n1", 5), 5);
+    n2_ = clampN(s.getInt("cal.n2", 5), 5);
+    ns_ = clampN(s.getInt("cal.ns", 8), 8);
+    loadLadder(s, "cal.v1", "cal.k1", v1_, k1_, n1_);
+    loadLadder(s, "cal.v2", "cal.k2", v2_, k2_, n2_);
+    loadLadder(s, "cal.vs", "cal.ks", vs_, ks_, ns_);
     build();
   }
   void saveThresholds(IStorage& s) const {
-    saveLadder(s, "cal.v1", "cal.k1", v1_, k1_, 5);
-    saveLadder(s, "cal.v2", "cal.k2", v2_, k2_, 5);
-    saveLadder(s, "cal.vs", "cal.ks", vs_, ks_, 8);
+    s.putInt("cal.n1", n1_); s.putInt("cal.n2", n2_); s.putInt("cal.ns", ns_);
+    saveLadder(s, "cal.v1", "cal.k1", v1_, k1_, n1_);
+    saveLadder(s, "cal.v2", "cal.k2", v2_, k2_, n2_);
+    saveLadder(s, "cal.vs", "cal.ks", vs_, ks_, ns_);
     s.commit();
   }
 
@@ -68,9 +74,9 @@ public:
     if (cal_) { runCalibration(); return; }  // ladders are captured, not dispatched
 
     b1_->update(); b2_->update(); sw_->update();
-    for (int i = 0; i < 5; ++i) if (b1_->onPress(i) && k1_[i] != Control::None) push(k1_[i]);
-    for (int i = 0; i < 5; ++i) if (b2_->onPress(i) && k2_[i] != Control::None) push(k2_[i]);
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < n1_; ++i) if (b1_->onPress(i) && k1_[i] != Control::None) push(k1_[i]);
+    for (int i = 0; i < n2_; ++i) if (b2_->onPress(i) && k2_[i] != Control::None) push(k2_[i]);
+    for (int i = 0; i < ns_; ++i) {
       if (ks_[i] == Control::None) continue;
       // Right+ distinguishes a tap (next track) from a hold (voice assistant);
       // so it fires on RELEASE for a tap, and once when held past the threshold.
@@ -107,7 +113,14 @@ public:
     stepStart_ = millis();
   }
   void cancelCalibration() override { cal_ = false; }
-  const char* calibPrompt() const override { return cal_ ? kSeq[calStep_ < kTotal ? calStep_ : kTotal - 1].name : (justSaved_ ? "SAVED" : ""); }
+  const char* calibPrompt() const override {
+    if (cal_) return kSeq[calStep_ < kTotal ? calStep_ : kTotal - 1].name;
+    if (!justSaved_) return "";
+    // Show how many slots were actually captured, so skipped steps are visible.
+    static char done[20];
+    snprintf(done, sizeof(done), "SAVED %d/%d", savedCount_, kTotal);
+    return done;
+  }
   int calibStep()  const override { return calStep_; }
   int calibTotal() const override { return kTotal; }
 
@@ -124,15 +137,17 @@ private:
                                    Control::SteerLeftMinus, Control::SteerRightPlus};
     memcpy(v1_, dv1, sizeof v1_); memcpy(v2_, dv2, sizeof v2_); memcpy(vs_, dvs, sizeof vs_);
     memcpy(k1_, dk1, sizeof k1_); memcpy(k2_, dk2, sizeof k2_); memcpy(ks_, dks, sizeof ks_);
+    n1_ = 5; n2_ = 5; ns_ = 8;
   }
   static int ladderPin(int l) {
     return l == 0 ? cfg::PIN_BTN_CONSOLE_1 : l == 1 ? cfg::PIN_BTN_CONSOLE_2 : cfg::PIN_BTN_STEERING;
   }
+  static int clampN(int n, int mx) { return n < 1 ? mx : (n > mx ? mx : n); }
   void build() {
     delete b1_; delete b2_; delete sw_;
-    b1_ = new AnalogMultiButton(cfg::PIN_BTN_CONSOLE_1, 5, v1_);
-    b2_ = new AnalogMultiButton(cfg::PIN_BTN_CONSOLE_2, 5, v2_);
-    sw_ = new AnalogMultiButton(cfg::PIN_BTN_STEERING,  8, vs_);
+    b1_ = new AnalogMultiButton(cfg::PIN_BTN_CONSOLE_1, n1_, v1_);
+    b2_ = new AnalogMultiButton(cfg::PIN_BTN_CONSOLE_2, n2_, v2_);
+    sw_ = new AnalogMultiButton(cfg::PIN_BTN_STEERING,  ns_, vs_);
   }
   void push(Control c, int8_t d = 0) {
     q_.push_back({c, d});
@@ -173,21 +188,29 @@ private:
   void advance() { ++calStep_; capState_ = 0; stepStart_ = millis(); }
 
   void finalizeCalibration() {
-    buildLadder(0, 0, 5, v1_, k1_);
-    buildLadder(1, 5, 5, v2_, k2_);
-    buildLadder(2, 10, 8, vs_, ks_);
+    savedCount_ = 0;
+    buildLadder(0, 0, 5, v1_, k1_, n1_);
+    buildLadder(1, 5, 5, v2_, k2_, n2_);
+    buildLadder(2, 10, 8, vs_, ks_, ns_);
     build();
     if (storage_) saveThresholds(*storage_);
     cal_ = false; justSaved_ = true;
   }
-  // Rebuild one ladder's ascending values[] + parallel control map from captured
-  // readings — but only if every slot was captured (else keep the old values).
-  void buildLadder(int ladder, int base, int n, int* outV, Control* outK) {
-    for (int i = 0; i < n; ++i) if (captured_[base + i] < 0) return; // incomplete -> keep defaults
+  // Rebuild one ladder's ascending values[] + parallel control map from the
+  // CAPTURED readings. Skipped steps (timeouts — typically the two-finger
+  // chords) simply drop out of the map instead of silently discarding the
+  // whole ladder: previously one skipped chord kept ALL the old values, so
+  // MENU stayed dead even though its own capture succeeded and "SAVED" showed.
+  void buildLadder(int ladder, int base, int n, int* outV, Control* outK, int& outN) {
     std::pair<int, Control> pairs[8];
-    for (int i = 0; i < n; ++i) pairs[i] = {captured_[base + i], kSeq[base + i].ctrl};
-    std::sort(pairs, pairs + n, [](auto& a, auto& b) { return a.first < b.first; });
-    for (int i = 0; i < n; ++i) { outV[i] = pairs[i].first; outK[i] = pairs[i].second; }
+    int cnt = 0;
+    for (int i = 0; i < n; ++i)
+      if (captured_[base + i] >= 0) pairs[cnt++] = {captured_[base + i], kSeq[base + i].ctrl};
+    if (cnt == 0) return;                          // nothing captured -> keep old ladder
+    std::sort(pairs, pairs + cnt, [](auto& a, auto& b) { return a.first < b.first; });
+    for (int i = 0; i < cnt; ++i) { outV[i] = pairs[i].first; outK[i] = pairs[i].second; }
+    outN = cnt;
+    savedCount_ += cnt;
   }
 
   void loadLadder(const IStorage& s, const char* vk, const char* kk, int* v, Control* k, int n) {
@@ -249,6 +272,8 @@ private:
   static constexpr uint32_t kVolRepeatMs = 150; // volume hold: repeat rate
   int v1_[5], v2_[5], vs_[8];
   Control k1_[5], k2_[5], ks_[8];
+  int n1_ = 5, n2_ = 5, ns_ = 8;        // live slot counts (partial calibration)
+  int savedCount_ = 0;                  // slots captured by the last calibration
   AnalogMultiButton *b1_ = nullptr, *b2_ = nullptr, *sw_ = nullptr;
   IStorage* storage_ = nullptr;
   int raw_[3] = {0, 0, 0};
