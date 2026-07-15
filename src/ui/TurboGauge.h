@@ -25,7 +25,8 @@ namespace mmi {
 
 class TurboGauge {
 public:
-  static constexpr int kBars  = 16;
+  static constexpr int kBars  = 10;   // FIS-Control/Maxi-K use 10 — fewer toggles
+                                      // per sweep (less FIS traffic), chunkier bars
   static constexpr int kBands = 7;    // 7 bands x 8 rows = y32..87
   static constexpr int kBandH = 8;
   static constexpr int kTop   = 32;   // screen Y of band 0
@@ -51,11 +52,11 @@ public:
     // the old split-sprite layout.
     drawCompressor(setPx, 16, 20, 11, spin);
 
-    // Histogram: 16 bars, 3px wide on a 4px pitch. Filled solid up to the lit
+    // Histogram: 10 bars, 5px wide on a 6px pitch. Filled solid up to the lit
     // level, hollow outline beyond it (rising power-curve heights).
     int lit = static_cast<int>(frac * kBars + 0.5f);
     for (int i = 0; i < kBars; ++i) {
-      int x0 = i * 4 + 1, x1 = x0 + 2;             // +1 so the last bar reaches the edge
+      int x0 = i * 6 + 2, x1 = x0 + 4;             // bars span x2..60
       int clipTop = (x1 <= 39) ? (kH - 21) : 0;    // under the compressor: bottom 21 rows only
       int y0 = kH - barH(i); if (y0 < clipTop) y0 = clipTop;
       if (i < lit) {

@@ -42,6 +42,7 @@ void App::begin() {
   adaptByte_  = storage_.getInt("kwp.byte",  0);
   adaptFrame_ = storage_.getInt("kwp.frame", 0);
   diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);
+  readEcu_ = static_cast<uint8_t>(storage_.getInt("diag.ecu", ecu::Engine));  // last SELECT ECU choice
   bt_.onStatusChanged([this]() { dirty_ = true; });
   menu_.onSelect([this](MenuId id) { onMenuSelect(id); });
   dirty_ = true;
@@ -125,19 +126,21 @@ void App::nowPlayingLines(std::string& l1, std::string& l2) const {
 }
 
 // Traffic button = one-touch ring through the driving gauges, so you never have
-// to dive into menus while moving: Speedo -> Turbo -> Favourites -> Speedo.
+// to dive into menus while moving: Speedo <-> Favourites (TURBO is on Info).
 // From Now-Playing it resumes your last-viewed gauge (remembered). Back or the
 // Nav button returns to Now-Playing.
 void App::cycleGauge() {
   menuOpen_ = false;
   Screen next;
   switch (screen_) {
-    case Screen::Speedo:         readEcu_ = ecu::Engine; readGroup_ = 11; next = Screen::DiagBoost; break;
-    case Screen::DiagBoost:      next = presets_.size() > 0 ? Screen::DiagFavourites : Screen::Speedo; break;
+    // Traffic rings only the two speed displays; the TURBO gauge lives on the
+    // Info button (Action::JumpSpeedo handler) instead.
+    case Screen::Speedo:         next = presets_.size() > 0 ? Screen::DiagFavourites : Screen::Speedo; break;
     case Screen::DiagFavourites: next = Screen::Speedo; break;
+    case Screen::DiagBoost:      next = Screen::Speedo; break;   // leaving turbo joins the ring
     default:                     next = lastGauge_; break;   // from home: resume preferred gauge
   }
-  if (next == Screen::DiagBoost) { readEcu_ = ecu::Engine; readGroup_ = 11; }
+  if (next == Screen::DiagBoost) next = Screen::Speedo;      // stale lastGauge_ from turbo
   openScreen(next);
   lastGauge_ = next;
   dirty_ = true;
@@ -317,7 +320,8 @@ void App::tick(uint32_t nowMs) {
       dirty_ = true;
     }
   }
-  if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
+  if (screen_ == Screen::ButtonMonitor || screen_ == Screen::EncoderMonitor ||
+      screen_ == Screen::Bc127Debug ||
       screen_ == Screen::DiagFaults || screen_ == Screen::Phonebook ||
       screen_ == Screen::RecentCalls) dirty_ = true; // live (marquee long names)
   // DiagBoost re-renders on its 250ms sample only (above); no per-tick animation.
@@ -363,8 +367,10 @@ void App::handle(Action a) {
       menuOpen_ = false; screen_ = Screen::None;
       dirty_ = true;
       return;
-    case Action::JumpSpeedo:
-      menuOpen_ = false; openScreen(Screen::Speedo);   // Info button quick-recall
+    case Action::JumpSpeedo:                           // Info button = TURBO gauge
+      menuOpen_ = false;
+      readEcu_ = ecu::Engine; readGroup_ = 11;
+      openScreen(Screen::DiagBoost);
       return;
     default: break;
   }
@@ -447,7 +453,8 @@ bool App::handleScreen(Action a) {
     else if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
     return true;
   }
-  if (screen_ == Screen::ButtonMonitor || screen_ == Screen::Bc127Debug ||
+  if (screen_ == Screen::ButtonMonitor || screen_ == Screen::EncoderMonitor ||
+      screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
     if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
     else if (a == Action::Select && screen_ == Screen::UpdateInfo && sys_) sys_->pullUpdate();
@@ -481,7 +488,21 @@ bool App::handleScreen(Action a) {
     if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
     return true;
   }
-  if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph) {
+  if (screen_ == Screen::DiagGraph) {
+    switch (a) {
+      case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::Select:     // cycle WHICH value of the group is plotted
+        graphVal_ = (graphVal_ + 1) % 4;
+        graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::RootBack:   // toggle a second dotted trace (the NEXT value) —
+        graphDual_ = !graphDual_;    // e.g. requested vs actual boost side by side
+        graph2_.clear(); dirty_ = true; return true;
+      case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
+      default: return false;
+    }
+  }
+  if (screen_ == Screen::DiagReadGroup) {
     switch (a) {
       case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); dirty_ = true; return true;
       case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); dirty_ = true; return true;
@@ -543,7 +564,10 @@ void App::screenSelect() {
     if (listIndex_ < static_cast<int>(e.size())) dialParty(e[listIndex_].name, e[listIndex_].number);   // redial
     screen_ = Screen::None;
   } else if (screen_ == Screen::SelectEcu) {
-    if (listIndex_ >= 0 && listIndex_ < ecu::kModuleCount) readEcu_ = ecu::kModules[listIndex_].addr;
+    if (listIndex_ >= 0 && listIndex_ < ecu::kModuleCount) {
+      readEcu_ = ecu::kModules[listIndex_].addr;
+      storage_.putInt("diag.ecu", readEcu_); storage_.commit();  // remembered across reboots
+    }
     group_.count = 0; faultsLoaded_ = false; faults_.clear();   // stale data belongs to the old module
     screen_ = Screen::None;
   }
@@ -621,8 +645,8 @@ void App::onMenuSelect(MenuId id) {
 
     // ---- Debug ----
     case MenuId::DbgMicTest:      openScreen(Screen::MicTest);        break;
-    case MenuId::DbgButtonMonitor:openScreen(Screen::ButtonMonitor);  break;
-    case MenuId::DbgEncoder:      openScreen(Screen::ButtonMonitor);  break; // shows encoder + ladders
+    case MenuId::DbgButtonMonitor:openScreen(Screen::ButtonMonitor);   break;
+    case MenuId::DbgEncoder:      openScreen(Screen::EncoderMonitor);  break;
     case MenuId::DbgBc127:        openScreen(Screen::Bc127Debug);     break;
     case MenuId::DbgCalibrate:    inputs_.startCalibration();         break;
     case MenuId::DbgFisTest:      charsetRow_ = 0xC0; openScreen(Screen::Charset); break;  // ROM charset explorer
@@ -687,11 +711,19 @@ void App::sampleDiag() {
     e = p.ecu; g = p.group; vi = p.valueIndex;
   } else if (screen_ == Screen::Speedo) {
     e = ecu::Dashboard; g = 1; vi = 0;              // speed = cluster group 1, value 1
+  } else if (screen_ == Screen::DiagGraph) {
+    vi = graphVal_;                                 // user-selected value within the group
   }
   if (!diag_.readGroup(e, g, group_)) return;
   if (vi < group_.count) {
     graph_.push_back(group_.values[vi].value);
     if (static_cast<int>(graph_.size()) > kGraphW) graph_.erase(graph_.begin());
+  }
+  // Dual-trace graph: sample the NEXT value of the group in lock-step.
+  if (screen_ == Screen::DiagGraph && graphDual_ && group_.count > 1) {
+    int v2 = (graphVal_ + 1) % group_.count;
+    graph2_.push_back(group_.values[v2].value);
+    if (static_cast<int>(graph2_.size()) > kGraphW) graph2_.erase(graph2_.begin());
   }
 }
 
@@ -843,28 +875,44 @@ void App::renderDiag() {
         display_.drawBitmap(0, static_cast<uint8_t>(TurboGauge::bandY(j)),
                             TurboGauge::kW, TurboGauge::kBandH, g.data() + j * (TurboGauge::kW / 8) * TurboGauge::kBandH);
     }
-    // Boost + duty readout OVERLAID near the top, CENTERED. Clears 56px (x0..55) so
-    // only the tallest right-edge bar (x61..63) keeps rising past it, unwiped.
-    display_.drawTextOverlay(0, 24, kFontCompressedCenter, 56, valStr.c_str());
+    // Boost + duty readout, CENTERED, full-width row. Bars top out at y32 so
+    // nothing lives beside it any more — a full 64px clear rides 2 jumbo packets
+    // (the old 56px overlay clear was 7 row-packets, and a dropped first packet
+    // showed as the readout's top getting trimmed).
+    display_.drawText(0, 24, kFontCompressedCenter, valStr.c_str());
     return;
   }
 
   if (view == View::Graph) {
+    bool dual = screen_ == Screen::DiagGraph && graphDual_ && !graph2_.empty();
     float mn = 0, mx = 5000, g1 = -1e9f, g2 = -1e9f;
     if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
       const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max; g1 = p.guide1; g2 = p.guide2;
     } else if (!graph_.empty()) {
       // Standalone GRAPH VALUE: auto-scale to the data so any value plots a
       // visible line (a fixed 0..5000 scale flat-lines coolant temp, boost, etc).
+      // A dual trace shares the scale so the two series are comparable.
       mn = mx = graph_[0];
       for (float v : graph_) { if (v < mn) mn = v; if (v > mx) mx = v; }
+      if (dual) for (float v : graph2_) { if (v < mn) mn = v; if (v > mx) mx = v; }
       float pad = (mx - mn) * 0.1f; if (pad < 1.f) pad = 1.f;   // margin; avoid zero range
       mn -= pad; mx += pad;
     }
-    auto bmp = GraphRenderer::render(graph_, mn, mx, kGraphW, 48, g1, g2);
+    auto bmp = GraphRenderer::render(graph_, mn, mx, kGraphW, 48, g1, g2,
+                                     dual ? &graph2_ : nullptr);
     display_.beginFullScreen(true);
-    Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
-    std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
+    if (screen_ == Screen::DiagGraph) {
+      // Header: group + which value(s) + live reading. SEL cycles the value,
+      // RETURN toggles the dotted second trace (the next value in the group).
+      int vi = graphVal_;
+      Measurement m = vi < group_.count ? group_.values[vi] : Measurement{};
+      int v2 = group_.count > 1 ? (vi + 1) % group_.count : vi;
+      if (dual) std::snprintf(l, sizeof(l), "G%u V%d+%d %s", static_cast<unsigned>(readGroup_), vi + 1, v2 + 1, fmt(m).c_str());
+      else      std::snprintf(l, sizeof(l), "G%u V%d %s",   static_cast<unsigned>(readGroup_), vi + 1, fmt(m).c_str());
+    } else {
+      Measurement m = valueIndex < group_.count ? group_.values[valueIndex] : Measurement{};
+      std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
+    }
     display_.drawText(0, 0, kFontCompressedLeft, l);
     display_.drawBitmap(0, 16, kGraphW, 48, bmp.data());
     return;
@@ -994,6 +1042,18 @@ void App::renderScreen() {
     std::snprintf(l, sizeof(l), "CON1 %d", inputs_.rawLadder(0)); display_.drawText(0, 20, kFontCompressedLeft, l);
     std::snprintf(l, sizeof(l), "CON2 %d", inputs_.rawLadder(1)); display_.drawText(0, 32, kFontCompressedLeft, l);
     std::snprintf(l, sizeof(l), "STEER %d", inputs_.rawLadder(2)); display_.drawText(0, 44, kFontCompressedLeft, l);
+    return;
+  }
+  if (screen_ == Screen::EncoderMonitor) {
+    display_.drawText(0, 0, kFontCentered, "ENCODER");
+    char l[24];
+    IInputs::EncoderDebug e;
+    if (!inputs_.encoderDebug(e)) { display_.drawText(0, 30, kFontCentered, "N/A"); return; }
+    std::snprintf(l, sizeof(l), "POS %d", e.pos);                    display_.drawText(0, 16, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "A=%d B=%d", e.a ? 1 : 0, e.b ? 1 : 0); display_.drawText(0, 28, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "BTN %s", e.pressed ? "DOWN" : "UP"); display_.drawText(0, 40, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "CLICKS %u", static_cast<unsigned>(e.clicks)); display_.drawText(0, 52, kFontCompressedLeft, l);
+    std::snprintf(l, sizeof(l), "HOLDS %u", static_cast<unsigned>(e.holds));   display_.drawText(0, 64, kFontCompressedLeft, l);
     return;
   }
   if (screen_ == Screen::Bc127Debug) {

@@ -38,7 +38,7 @@ public:
 private:
   // A leaf screen opened from the menu.
   enum class Screen : uint8_t {
-    None, SwitchDevice, Phonebook, RecentCalls, MicTest, ButtonMonitor, Bc127Debug,
+    None, SwitchDevice, Phonebook, RecentCalls, MicTest, ButtonMonitor, EncoderMonitor, Bc127Debug,
     WifiInfo, UpdateInfo, OneDevice, NamePreset,
     DiagFavourites, DiagReadGroup, DiagGraph, DiagBoost, DiagFaults, Speedo,
     SelectEcu, // pick the KWP module to talk to
@@ -65,7 +65,7 @@ private:
   void switchPhone(int dir);
   void mediaStep(int dir);       // next/prev: BT track, tuner seek, or phone switch by source
   void nowPlayingLines(std::string& l1, std::string& l2) const;  // home's top two rows; reused verbatim on gauge tops
-  void cycleGauge();             // Traffic: one-touch ring Speedo -> Turbo -> Favourites
+  void cycleGauge();             // Traffic: one-touch ring Speedo <-> Favourites (turbo = Info)
   Screen lastGauge_ = Screen::Speedo;   // remembered so Traffic from home resumes your preferred gauge
   void seedDefaultGauges();      // seed useful favourites on first boot (so gauges work out-of-box)
   std::string fitRow(const std::string& label, const std::string& value) const;  // fit label+value to width
@@ -99,6 +99,9 @@ private:
   // Diagnostics working state
   Group              group_;          // last measuring group read
   std::vector<float> graph_;          // ring of samples for the graph view
+  std::vector<float> graph2_;         // second series (dual-trace graph, dotted)
+  int                graphVal_ = 0;   // which group value the graph plots (0..3)
+  bool               graphDual_ = false; // also plot the NEXT value as a dotted trace
   int                diagPresetIdx_ = 0;
   uint8_t            readEcu_ = ecu::Engine;
   uint8_t            readGroup_ = 2;

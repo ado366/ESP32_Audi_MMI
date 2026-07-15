@@ -193,19 +193,27 @@ private:
     if (s != lastEnc_) {
       accum_ += tbl[(lastEnc_ << 2) | s];
       lastEnc_ = s;
-      if (accum_ >= 4)  { push(Control::EncoderCW,  +1); accum_ = 0; }
-      else if (accum_ <= -4) { push(Control::EncoderCW, -1); accum_ = 0; }
+      if (accum_ >= 4)  { push(Control::EncoderCW,  +1); ++encPos_; accum_ = 0; }
+      else if (accum_ <= -4) { push(Control::EncoderCW, -1); --encPos_; accum_ = 0; }
     }
     bool pressed = digitalRead(cfg::PIN_ENC_BUTTON) == LOW;
     uint32_t now = millis();
     if (pressed && !wasPressed_) { pressStart_ = now; holdSent_ = false; }
-    if (pressed && !holdSent_ && (now - pressStart_) > kHoldMs) { push(Control::EncoderHold); holdSent_ = true; }
-    if (!pressed && wasPressed_ && !holdSent_ && (now - pressStart_) < kHoldMs) push(Control::EncoderClick);
+    if (pressed && !holdSent_ && (now - pressStart_) > kHoldMs) { push(Control::EncoderHold); ++encHolds_; holdSent_ = true; }
+    if (!pressed && wasPressed_ && !holdSent_ && (now - pressStart_) < kHoldMs) { push(Control::EncoderClick); ++encClicks_; }
     wasPressed_ = pressed;
   }
 
 public:
   void attachStorage(IStorage* s) { storage_ = s; } // so finalize can persist
+
+  bool encoderDebug(EncoderDebug& out) const override {
+    out.pos = encPos_;
+    out.a = lastEnc_ & 0x02; out.b = lastEnc_ & 0x01;   // raw quadrature levels
+    out.pressed = wasPressed_;
+    out.clicks = encClicks_; out.holds = encHolds_;
+    return true;
+  }
 
 private:
   static constexpr uint32_t kHoldMs = 3000;     // runtime long-press -> open menu
@@ -219,6 +227,8 @@ private:
   std::deque<InputEvent> q_;
   uint8_t lastEnc_ = 0;
   int accum_ = 0;
+  int encPos_ = 0;                      // accumulated detents (encoder debug screen)
+  uint16_t encClicks_ = 0, encHolds_ = 0;
   bool wasPressed_ = false, holdSent_ = false;
   uint32_t pressStart_ = 0;
   // calibration state

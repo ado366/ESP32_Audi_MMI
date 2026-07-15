@@ -17,6 +17,16 @@ public:
   // for the Button-Monitor / calibration screen. -1 if not applicable (native).
   virtual int rawLadder(int ladder) const { (void)ladder; return -1; }
 
+  // Live encoder diagnostics for the ENCODER debug screen. Returns false when
+  // not available (native emulator).
+  struct EncoderDebug {
+    int      pos = 0;                  // accumulated detents since boot (+CW/-CCW)
+    bool     a = false, b = false;     // raw quadrature pin levels
+    bool     pressed = false;          // button currently down
+    uint16_t clicks = 0, holds = 0;    // decoded click / long-press counts
+  };
+  virtual bool encoderDebug(EncoderDebug& out) const { (void)out; return false; }
+
   // --- Button-learning (calibration) hooks (no-ops on native) ---
   virtual bool        calibrating() const { return false; }
   virtual void        startCalibration() {}

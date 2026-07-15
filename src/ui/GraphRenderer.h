@@ -12,9 +12,12 @@ class GraphRenderer {
 public:
   // Render `samples` (oldest..newest) as a line graph scaled to [min,max].
   // guide1/guide2 draw dashed horizontal reference lines when within range.
+  // `samples2` (optional) overlays a SECOND series as a dotted trace on the same
+  // scale — e.g. requested vs actual boost.
   static std::vector<uint8_t> render(const std::vector<float>& samples,
                                      float min, float max, uint8_t w, uint8_t h,
-                                     float guide1 = -1e9f, float guide2 = -1e9f) {
+                                     float guide1 = -1e9f, float guide2 = -1e9f,
+                                     const std::vector<float>* samples2 = nullptr) {
     std::vector<uint8_t> bmp((static_cast<size_t>(w) * h + 7) / 8, 0);
     if (w == 0 || h == 0) return bmp;
     if (max <= min) max = min + 1.f;
@@ -38,6 +41,17 @@ public:
       if (g < min || g > max) continue;
       int gy = yOf(g);
       for (int x = 0; x < w; x += 2) setPx(x, gy);
+    }
+
+    // Second series first (dotted: every other column, single pixel — the solid
+    // primary trace stays readable where they overlap).
+    if (samples2 && !samples2->empty()) {
+      int n2 = static_cast<int>(samples2->size());
+      for (int x = 0; x < w; x += 2) {
+        int si = n2 - w + x;
+        if (si < 0) continue;
+        setPx(x, yOf((*samples2)[si]));
+      }
     }
 
     // Plot newest samples at the right edge; connect consecutive points.
