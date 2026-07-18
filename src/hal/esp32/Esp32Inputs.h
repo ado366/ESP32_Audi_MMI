@@ -131,7 +131,10 @@ private:
     static const int  dv2[5] = {330, 389, 1001, 1467, 1883};
     static const int  dvs[8] = {1622, 1679, 1872, 2152, 2516, 2627, 2967, 3247};
     static const Control dk1[5] = {Control::MenuNav, Control::Nav, Control::MenuReturn, Control::Return, Control::Menu};
-    static const Control dk2[5] = {Control::InfoReverse, Control::Info, Control::TrafficReverse, Control::Traffic, Control::None};
+    // Top slot (~1883): v1 reserved it for reverse-gear, but on this car the
+    // reverse signal never reaches any ladder (verified: all ladders idle at
+    // 4095 with reverse engaged) and the physical MENU button lands here.
+    static const Control dk2[5] = {Control::InfoReverse, Control::Info, Control::TrafficReverse, Control::Traffic, Control::Menu};
     static const Control dks[8] = {Control::SteerLPlusRMinus, Control::SteerLPlusRPlus, Control::SteerLeftPlus,
                                    Control::SteerLMinusRMinus, Control::SteerLMinusRPlus, Control::SteerRightMinus,
                                    Control::SteerLeftMinus, Control::SteerRightPlus};
@@ -170,42 +173,57 @@ private:
 
   void runCalibration() {
     if (calStep_ >= kTotal) { finalizeCalibration(); return; }
-    int l = kSeq[calStep_].ladder;
-    int r = raw_[l];
-    bool pressed = r < baseline_[l] - 250;
     uint32_t now = millis();
-    if (capState_ == 0) {                       // waiting for a press
-      if (pressed) { capState_ = 1; capStart_ = now; sum_ = 0; cnt_ = 0; }
+    if (capState_ == 0) {                       // waiting for a press on ANY ladder
+      // kSeq's ladder is only where v1 EXPECTED the button. Capture on whichever
+      // ladder actually moves, so a harness wired differently still calibrates
+      // (this car's MENU is on console 2, not console 1 where v1 had it).
+      int best = -1, bestDrop = 250;
+      for (int l = 0; l < 3; ++l) {
+        int drop = baseline_[l] - raw_[l];
+        if (drop > bestDrop) { best = l; bestDrop = drop; }
+      }
+      if (best >= 0) { capLadder_ = best; capState_ = 1; capStart_ = now; sum_ = 0; cnt_ = 0; }
       else if (now - stepStart_ > 8000) { captured_[calStep_] = -1; advance(); } // timeout -> skip
-    } else if (capState_ == 1) {                // stable press -> average
-      if (!pressed) { capState_ = 0; }          // released too soon
-      else { sum_ += r; ++cnt_;
-        if (now - capStart_ > 500) { captured_[calStep_] = (int)(sum_ / cnt_); capState_ = 2; } }
-    } else {                                     // wait for release
-      if (r > baseline_[l] - 120) advance();
+    } else {
+      int r = raw_[capLadder_];
+      bool pressed = r < baseline_[capLadder_] - 250;
+      if (capState_ == 1) {                     // stable press -> average
+        if (!pressed) { capState_ = 0; }        // released too soon
+        else { sum_ += r; ++cnt_;
+          if (now - capStart_ > 500) {
+            captured_[calStep_] = (int)(sum_ / cnt_);
+            capLadders_[calStep_] = (int8_t)capLadder_;
+            capState_ = 2;
+          } }
+      } else {                                   // wait for release
+        if (r > baseline_[capLadder_] - 120) advance();
+      }
     }
   }
   void advance() { ++calStep_; capState_ = 0; stepStart_ = millis(); }
 
   void finalizeCalibration() {
     savedCount_ = 0;
-    buildLadder(0, 0, 5, v1_, k1_, n1_);
-    buildLadder(1, 5, 5, v2_, k2_, n2_);
-    buildLadder(2, 10, 8, vs_, ks_, ns_);
+    buildLadder(0, v1_, k1_, 5, n1_);
+    buildLadder(1, v2_, k2_, 5, n2_);
+    buildLadder(2, vs_, ks_, 8, ns_);
     build();
     if (storage_) saveThresholds(*storage_);
     cal_ = false; justSaved_ = true;
   }
   // Rebuild one ladder's ascending values[] + parallel control map from the
-  // CAPTURED readings. Skipped steps (timeouts — typically the two-finger
+  // CAPTURED readings — grouped by the ladder each press was OBSERVED on, not
+  // the one kSeq predicted. Skipped steps (timeouts — typically the two-finger
   // chords) simply drop out of the map instead of silently discarding the
   // whole ladder: previously one skipped chord kept ALL the old values, so
   // MENU stayed dead even though its own capture succeeded and "SAVED" showed.
-  void buildLadder(int ladder, int base, int n, int* outV, Control* outK, int& outN) {
+  void buildLadder(int ladder, int* outV, Control* outK, int cap, int& outN) {
     std::pair<int, Control> pairs[8];
     int cnt = 0;
-    for (int i = 0; i < n; ++i)
-      if (captured_[base + i] >= 0) pairs[cnt++] = {captured_[base + i], kSeq[base + i].ctrl};
+    for (int i = 0; i < kTotal && cnt < cap; ++i)
+      if (captured_[i] >= 0 && capLadders_[i] == ladder)
+        pairs[cnt++] = {captured_[i], kSeq[i].ctrl};
     if (cnt == 0) return;                          // nothing captured -> keep old ladder
     std::sort(pairs, pairs + cnt, [](auto& a, auto& b) { return a.first < b.first; });
     for (int i = 0; i < cnt; ++i) { outV[i] = pairs[i].first; outK[i] = pairs[i].second; }
@@ -292,6 +310,8 @@ private:
   int calStep_ = 0, capState_ = 0, cnt_ = 0;
   long sum_ = 0;
   int captured_[18] = {0};
+  int8_t capLadders_[18] = {0};   // which ladder each press was observed on
+  int capLadder_ = 0;             // ladder being captured in the current step
   int baseline_[3] = {4095, 4095, 4095};
   uint32_t stepStart_ = 0, capStart_ = 0;
 };
