@@ -5,7 +5,7 @@
 namespace cfg {
 
 // Firmware version (shown on the Version screen + OTA page; bump per release).
-constexpr const char* FW_VERSION = "2.9.1";
+constexpr const char* FW_VERSION = "2.9.2";
 
 // Default pull-OTA source: the "latest" release asset on GitHub. Overridable via
 // the NVS key "ota.url". Publish firmware.bin as a release asset named exactly this.
@@ -21,6 +21,10 @@ constexpr bool DEBUG_BC127_SERIAL = false;
 
 
 // ---- Rotary encoder (center console) ----
+// Quadrature counts per physical detent. THIS encoder detents at every
+// quadrature state (1 count/click); classic EC11-style parts are 4.
+// Symptom of getting it wrong: N clicks needed per one menu step.
+constexpr int ENC_COUNTS_PER_DETENT = 1;
 constexpr int PIN_ENC_A      = 22;
 constexpr int PIN_ENC_B      = 19;
 constexpr int PIN_ENC_BUTTON = 21;

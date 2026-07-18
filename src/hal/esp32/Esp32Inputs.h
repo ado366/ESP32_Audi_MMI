@@ -219,14 +219,25 @@ private:
   // whole ladder: previously one skipped chord kept ALL the old values, so
   // MENU stayed dead even though its own capture succeeded and "SAVED" showed.
   void buildLadder(int ladder, int* outV, Control* outK, int cap, int& outN) {
-    std::pair<int, Control> pairs[8];
+    struct Cap { int v; Control c; int step; };
+    Cap caps[8];
     int cnt = 0;
-    for (int i = 0; i < kTotal && cnt < cap; ++i)
-      if (captured_[i] >= 0 && capLadders_[i] == ladder)
-        pairs[cnt++] = {captured_[i], kSeq[i].ctrl};
+    for (int i = 0; i < kTotal && cnt < cap; ++i) {
+      if (captured_[i] < 0 || capLadders_[i] != ladder) continue;
+      // A capture within 100 counts of an EARLIER step's capture is the same
+      // physical contact seen twice — e.g. a cross-ladder chord (MENU+RET with
+      // MENU on console 2, RETURN on console 1) locks onto the first finger
+      // and records the chord at that button's own value, which would then
+      // shadow the real button in the decode. Single buttons come first in
+      // kSeq, so keeping the earlier step keeps the real button.
+      bool dup = false;
+      for (int j = 0; j < cnt; ++j)
+        if (abs(caps[j].v - captured_[i]) < 100) { dup = true; break; }
+      if (!dup) caps[cnt++] = {captured_[i], kSeq[i].ctrl, i};
+    }
     if (cnt == 0) return;                          // nothing captured -> keep old ladder
-    std::sort(pairs, pairs + cnt, [](auto& a, auto& b) { return a.first < b.first; });
-    for (int i = 0; i < cnt; ++i) { outV[i] = pairs[i].first; outK[i] = pairs[i].second; }
+    std::sort(caps, caps + cnt, [](const Cap& a, const Cap& b) { return a.v < b.v; });
+    for (int i = 0; i < cnt; ++i) { outV[i] = caps[i].v; outK[i] = caps[i].c; }
     outN = cnt;
     savedCount_ += cnt;
   }
@@ -253,8 +264,8 @@ private:
     // event carrying the step count — a fast spin arrives as e.g. delta=3.
     noInterrupts();
     int acc = isrAccum_;
-    int steps = acc / 4;
-    isrAccum_ = acc - steps * 4;       // keep the sub-detent remainder
+    int steps = acc / cfg::ENC_COUNTS_PER_DETENT;
+    isrAccum_ = acc - steps * cfg::ENC_COUNTS_PER_DETENT;  // keep the sub-detent remainder
     interrupts();
     if (steps != 0) {
       push(Control::EncoderCW, (int8_t)(steps > 127 ? 127 : steps < -128 ? -128 : steps));
