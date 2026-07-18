@@ -57,7 +57,15 @@ private:
   bool ensureConnected(uint8_t addr) {
     if (kwp_.isConnected() && kwp_.getCurrAddr() == addr) { connected_ = true; return true; }
     if (kwp_.isConnected()) kwp_.disconnect();
-    connected_ = kwp_.connect(addr, 10400);   // blocking init — off the UI core
+    // ECUs differ in K-line baud: this car's cluster (17) is 10400 but the
+    // EDC15 engine ECU (01) answers at 9600 — at the wrong rate the 0x55 sync
+    // smears into 0x95. ONE init per call, alternating baud on failure: an
+    // EDC15 goes deaf for seconds after an aborted handshake, so back-to-back
+    // attempts always miss. The caller's retry delay provides the quiet gap;
+    // a success pins this address's baud for future reconnects.
+    int baud = baud9600_[addr] ? 9600 : 10400;
+    connected_ = kwp_.connect(addr, baud);    // blocking init — off the UI core
+    if (!connected_) baud9600_[addr] = !baud9600_[addr];   // other baud next try
     return connected_;
   }
 
@@ -87,13 +95,13 @@ private:
             }
             faultReq_ = false;
           }
-        } else { vTaskDelay(pdMS_TO_TICKS(500)); }
+        } else { vTaskDelay(pdMS_TO_TICKS(2500)); }   // aborted-handshake recovery
         continue;
       }
 
       uint8_t e = reqEcu_, g = reqGroup_;
       if (e == 0) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
-      if (!ensureConnected(e)) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }
+      if (!ensureConnected(e)) { vTaskDelay(pdMS_TO_TICKS(2500)); continue; }  // aborted-handshake recovery
 
       SENSOR s[16];
       int n = kwp_.readBlock(e, g, 16, s);
@@ -123,6 +131,7 @@ private:
   std::vector<Dtc> faults_;
   volatile uint8_t reqEcu_ = 0, reqGroup_ = 0, curEcu_ = 0, curGroup_ = 0, faultEcu_ = 0;
   volatile bool connected_ = false, haveData_ = false, stopReq_ = false;
+  bool baud9600_[256] = {false};   // per-address: last successful baud was 9600
   volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;
   volatile int  probeRx_ = -1, probeTx_ = -1;
   volatile uint32_t reads_ = 0;
