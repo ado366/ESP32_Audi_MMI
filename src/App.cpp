@@ -146,23 +146,43 @@ void App::cycleGauge() {
   dirty_ = true;
 }
 
+// Vehicle-speed source: engine ECU group 6, value 1 ("Speed, km/h" — unanimous
+// across the EDC15 TDI VCDS label files 028-906-021/038-906-012/038-906-018;
+// group 5 is "Starting conditions"). Sharing the engine ECU with the other
+// gauges avoids KWP module switching (the K-line is point-to-point; the old
+// cluster-sourced speed cost a ~2s reconnect when the gauge ring crossed
+// between speed and an engine gauge).
+static constexpr uint8_t kSpeedEcu   = ecu::Engine;
+static constexpr uint8_t kSpeedGroup = 6;
+static constexpr uint8_t kSpeedVi    = 0;
+
 // Seed a few useful favourites on first boot so the gauges work out-of-box (the
-// Favourites list was empty, hiding the whole feature). SPEED reads the cluster
-// (always powered); the engine gauges are common EDC15 blocks the user can edit
-// or delete in-menu. Guarded by a one-time flag so deletions stick.
+// Favourites list was empty, hiding the whole feature). All gauges read the
+// engine ECU (single KWP connection); the user can edit or delete in-menu.
+// Guarded by a one-time flag so deletions stick.
 void App::seedDefaultGauges() {
   auto add = [&](uint8_t ecu, uint8_t group, uint8_t vi, View v, float mn, float mx, const char* label) {
     Preset p; p.ecu = ecu; p.group = group; p.valueIndex = vi; p.view = v; p.min = mn; p.max = mx;
     std::strncpy(p.label, label, 8); p.label[8] = 0; presets_.add(p);
   };
   if (presets_.size() == 0) {
-    add(ecu::Dashboard, 1, 0, View::TopLine,   0,  260,  "SPEED");    // cluster: reliable
+    add(kSpeedEcu, kSpeedGroup, kSpeedVi, View::TopLine, 0, 260, "SPEED");
     add(ecu::Engine,    1, 0, View::Graph,     0, 5000,  "RPM");
     add(ecu::Engine,    1, 2, View::TopLine,   0,  150,  "COOLANT");
     add(ecu::Engine,   11, 0, View::Boost,     0,  2.5f, "BOOST");
     presets_.save(storage_);
   }
   storage_.putInt("diag.seeded", static_cast<int>(sizeof(Preset))); storage_.commit();
+  // Migrate an already-seeded cluster-sourced SPEED gauge (pre-2.9.3 default)
+  // onto the engine ECU. Only the untouched old seed matches, so this runs
+  // once and never fights a user's own edits.
+  for (int i = 0; i < presets_.size(); ++i) {
+    Preset& p = presets_.at(i);
+    if (p.ecu == ecu::Dashboard && p.group == 1 && std::strcmp(p.label, "SPEED") == 0) {
+      p.ecu = kSpeedEcu; p.group = kSpeedGroup; p.valueIndex = kSpeedVi;
+      presets_.save(storage_);
+    }
+  }
 }
 
 // Best label to show for the current call: resolved contact name > caller number
@@ -754,7 +774,7 @@ void App::sampleDiag() {
     const Preset& p = presets_.at(diagPresetIdx_);
     e = p.ecu; g = p.group; vi = p.valueIndex;
   } else if (screen_ == Screen::Speedo) {
-    e = ecu::Dashboard; g = 1; vi = 0;              // speed = cluster group 1, value 1
+    e = kSpeedEcu; g = kSpeedGroup; vi = kSpeedVi;  // speed via the engine ECU
   } else if (screen_ == Screen::DiagGraph) {
     vi = graphVal_;                                 // user-selected value within the group
   }
@@ -781,7 +801,7 @@ void App::renderDiag() {
       int p = static_cast<int>((now_ / 50) % 402u);
       spd = p < 201 ? p : 401 - p;
     } else {
-      spd = group_.count > 0 ? static_cast<int>(group_.values[0].value + 0.5f) : 0;
+      spd = group_.count > kSpeedVi ? static_cast<int>(group_.values[kSpeedVi].value + 0.5f) : 0;
     }
     std::string l1, l2; nowPlayingLines(l1, l2);     // identical to home's top two rows
     l1 = marquee(l1, kWin); l2 = marquee(l2, kWin);                                 // same font+window as home
@@ -791,10 +811,15 @@ void App::renderDiag() {
     // via the narrow-workspace path), so digits can be BIGGER than the old
     // whole-number bitmap (which starved the keepalive when speed changed fast).
     {
-      char s[8]; std::snprintf(s, sizeof(s), "%3d", spd < 0 ? 0 : (spd > 999 ? 999 : spd));
+      // Center the VISIBLE digits: "%3d" space-padding left a blank leading
+      // cell below 100 km/h, shifting the number visually to the right. Cell
+      // positions only move when the digit COUNT changes (9<->10, 99<->100),
+      // so the changed-digit-only resend still holds at steady count.
+      char s[8]; std::snprintf(s, sizeof(s), "%d", spd < 0 ? 0 : (spd > 999 ? 999 : spd));
+      const int nd = static_cast<int>(std::strlen(s));
       const int dw = 16, dh = 28, gap = 4;
-      const int x0 = (64 - (3 * dw + 2 * gap)) / 2;   // = 4
-      for (int i = 0; i < 3; ++i) {
+      const int x0 = (64 - (nd * dw + (nd - 1) * gap)) / 2;
+      for (int i = 0; i < nd; ++i) {
         auto cell = SpeedoRenderer::digitCell(s[i], dw, dh, 3);
         display_.drawBitmap(static_cast<uint8_t>(x0 + i * (dw + gap)), 34,
                             static_cast<uint8_t>(dw), static_cast<uint8_t>(dh), cell.data());
