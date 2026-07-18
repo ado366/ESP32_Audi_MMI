@@ -8,6 +8,7 @@
 #include "diag/DtcDescriptions.h"
 #include "diag/DtcElaboration.h"
 #include "diag/SpeedoRenderer.h"
+#include "diag/EngineLabels.h"
 #include <cstdio>
 
 namespace mmi {
@@ -1062,7 +1063,11 @@ void App::renderDiag() {
     std::string val = fmt(group_.values[i]);
     int vx = 64 - static_cast<int>(val.size()) * 22 / 5;  // right-align flush (~4.4px/compressed char)
     if (vx < 0) vx = 0;
-    display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, group_.values[i].label.c_str()); // label (left)
+    // Real VCDS field name when we have one for this ECU; the generic formula-
+    // derived label is often wrong per-block (grp2 field 4 is coolant, not MAF).
+    const char* lbl = (readEcu_ == ecu::Engine && screen_ == Screen::DiagReadGroup)
+                          ? engineFieldLabel(readGroup_, i) : nullptr;
+    display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, lbl ? lbl : group_.values[i].label.c_str()); // label (left)
     display_.drawText(static_cast<uint8_t>(vx), static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, val.c_str()); // value (right)
   }
 }
