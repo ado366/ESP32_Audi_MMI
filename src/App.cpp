@@ -1061,7 +1061,7 @@ void App::renderDiag() {
     int y = kDiagTop + i * kLineH * 2;
     if (y + kLineH + 7 > 88) break;
     std::string val = fmt(group_.values[i]);
-    int vx = 64 - static_cast<int>(val.size()) * 22 / 5;  // right-align flush (~4.4px/compressed char)
+    int vx = 64 - static_cast<int>(val.size()) * 5;  // right-align: compressed cell = 5px
     if (vx < 0) vx = 0;
     // Real VCDS field name when we have one for this ECU; the generic formula-
     // derived label is often wrong per-block (grp2 field 4 is coolant, not MAF).
@@ -1298,7 +1298,11 @@ void App::renderScreen() {
     } else {  // Phonebook / RecentCalls
       const Phonebook& pb = isRc ? callHistory_ : phonebook_;
       std::string nm = pb.entries()[i].name;
-      if (i == listIndex_ && static_cast<int>(nm.size()) > 13) nm = marquee(nm, 13);  // scroll long names
+      // Row budget: 64px / 5px-compressed-cell = 12 chars incl. the leading
+      // space. Selected row marquees, the rest hard-truncate (they clipped on
+      // the right before — recents are often bare 13-digit numbers).
+      if (i == listIndex_) { if (static_cast<int>(nm.size()) > 11) nm = marquee(nm, 11); }
+      else if (nm.size() > 11) nm = nm.substr(0, 11);
       std::snprintf(line, sizeof(line), " %s", nm.c_str());
     }
     // Selected row gets the inverse highlight bar instead of a '>' marker.
