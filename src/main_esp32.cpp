@@ -61,13 +61,15 @@ void setup() {
   FaultDb::begin();   // mount SPIFFS; register full VAG fault descriptions if uploaded
 
   // Secured WiFi AP + OTA (credentials from NVS, with safe defaults).
-  std::string ssid, pass, otaPass, homeSsid, homePass;
+  std::string ssid, pass, otaPass, homeSsid, homePass, hotSsid, hotPass;
   if (!storage.getString("wifi.ssid", ssid)) ssid = "ESP32_MMI";
   if (!storage.getString("wifi.pass", pass) || pass.size() < 8) pass = "audimmi2024";
   if (!storage.getString("ota.pass",  otaPass)) otaPass = pass;
-  storage.getString("home.ssid", homeSsid);   // provisioned via USB flash
+  storage.getString("home.ssid", homeSsid);    // provisioned via USB flash
   storage.getString("home.pass", homePass);
-  ota.beginAp(ssid, pass, "admin", otaPass, homeSsid, homePass);
+  storage.getString("hotspot.ssid", hotSsid);  // phone hotspot: reachable in the car
+  storage.getString("hotspot.pass", hotPass);
+  ota.beginAp(ssid, pass, "admin", otaPass, {{homeSsid, homePass}, {hotSsid, hotPass}});
 
   // Live-debug hooks (reachable from a phone on the AP at http://192.168.4.1):
   //  /status  -> JSON telemetry,  /bc127 -> raw BC127 command console.
@@ -138,7 +140,7 @@ void loop() {
     const BtStatus& s = bt.status();
     Serial.printf("[hb] up=%lus heap=%u wifi=%s ip=%s link=%d dev=%s play=%d call=%d kwp=%d bc_rx=%lu fisfail=%lu ctx=%d\n",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
-      WiFi.status() == WL_CONNECTED ? "home" : "ap-only", ota.staIP().c_str(),
+      WiFi.status() == WL_CONNECTED ? WiFi.SSID().c_str() : "ap-only", ota.staIP().c_str(),
       s.linked, s.activeDeviceName.c_str(), s.playing, (int)s.call,
       diag.isConnected(), (unsigned long)bt.rxBytes(), (unsigned long)display.writeFails(),
       app ? (int)app->context() : -1);

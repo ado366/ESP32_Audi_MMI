@@ -24,13 +24,19 @@ class OtaManager {
 public:
   void beginAp(const std::string& ssid, const std::string& pass,
                const std::string& user, const std::string& otaPass,
-               const std::string& staSsid = "", const std::string& staPass = "") {
+               const std::vector<std::pair<std::string, std::string>>& staNets = {}) {
     user_ = user; otaPass_ = otaPass;
-    // AP always up (192.168.4.1); also join the home network so the UI is
-    // reachable from a computer on that network (in the car the join just fails).
+    // AP always up (192.168.4.1); also join a known network (home wifi or the
+    // phone hotspot) so the UI is reachable from a computer on that network.
+    // While disconnected, handle() rotates through the candidates every 15s.
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(ssid.c_str(), pass.c_str());   // WPA2; pass must be >= 8 chars
-    if (!staSsid.empty()) WiFi.begin(staSsid.c_str(), staPass.c_str());
+    for (const auto& n : staNets) if (!n.first.empty()) staNets_.push_back(n);
+    if (!staNets_.empty()) {
+      staLastMs_ = millis();
+      const auto& n = staNets_[staIdx_++ % staNets_.size()];
+      WiFi.begin(n.first.c_str(), n.second.c_str());
+    }
     MDNS.begin("audimmi");                     // http://audimmi.local
     MDNS.addService("http", "tcp", 80);
 
@@ -160,7 +166,19 @@ public:
   void setControlHooks(std::function<std::string()> state,
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
 
-  void handle() { if (apUp_) server_.handleClient(); }
+  void handle() {
+    if (apUp_) server_.handleClient();
+    // STA roaming: while not joined, retry the candidate networks round-robin.
+    // WiFi.begin is async so a failed attempt costs nothing; 15s per try.
+    if (!staNets_.empty() && WiFi.status() != WL_CONNECTED) {
+      uint32_t now = millis();
+      if (now - staLastMs_ >= 15000) {
+        staLastMs_ = now;
+        const auto& n = staNets_[staIdx_++ % staNets_.size()];
+        WiFi.begin(n.first.c_str(), n.second.c_str());
+      }
+    }
+  }
   // Home-network IP once joined ("0.0.0.0" if not connected).
   std::string staIP() const { return WiFi.localIP().toString().c_str(); }
 
@@ -217,6 +235,9 @@ private:
 
   WebServer   server_{80};
   std::string user_, otaPass_;
+  std::vector<std::pair<std::string, std::string>> staNets_;  // roam candidates
+  size_t   staIdx_    = 0;
+  uint32_t staLastMs_ = 0;
   bool        apUp_ = false;
   File        descFile_;             // /faults.bin upload in progress
   bool        descOk_ = false;
