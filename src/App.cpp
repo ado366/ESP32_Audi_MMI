@@ -165,24 +165,37 @@ void App::seedDefaultGauges() {
     Preset p; p.ecu = ecu; p.group = group; p.valueIndex = vi; p.view = v; p.min = mn; p.max = mx;
     std::strncpy(p.label, label, 8); p.label[8] = 0; presets_.add(p);
   };
+  // Field indices verified against the EDC15 TDI VCDS label files (this car:
+  // 038906019CC; layout matches 038-906-018): grp1 = [rpm, inj qty, mod piston
+  // displ, COOLANT], grp6 = [SPEED km/h, ...], grp11 = [rpm, MAP spec,
+  // MAP ACTUAL, duty].
   if (presets_.size() == 0) {
     add(kSpeedEcu, kSpeedGroup, kSpeedVi, View::TopLine, 0, 260, "SPEED");
     add(ecu::Engine,    1, 0, View::Graph,     0, 5000,  "RPM");
-    add(ecu::Engine,    1, 2, View::TopLine,   0,  150,  "COOLANT");
-    add(ecu::Engine,   11, 0, View::Boost,     0,  2.5f, "BOOST");
+    add(ecu::Engine,    1, 3, View::TopLine,   0,  150,  "COOLANT");
+    add(ecu::Engine,   11, 2, View::Boost,     0,  2.5f, "BOOST");
     presets_.save(storage_);
   }
   storage_.putInt("diag.seeded", static_cast<int>(sizeof(Preset))); storage_.commit();
-  // Migrate an already-seeded cluster-sourced SPEED gauge (pre-2.9.3 default)
-  // onto the engine ECU. Only the untouched old seed matches, so this runs
-  // once and never fights a user's own edits.
+  // Migrate already-seeded gauges whose field indices predate the label-file
+  // verification. Only the untouched old seeds match, so each runs once and
+  // never fights a user's own edits: SPEED cluster->engine grp6, COOLANT
+  // grp1 field 3->4 (field 3 is piston displacement), BOOST grp11 field
+  // 1->3 (field 1 is engine speed).
+  bool migrated = false;
   for (int i = 0; i < presets_.size(); ++i) {
     Preset& p = presets_.at(i);
     if (p.ecu == ecu::Dashboard && p.group == 1 && std::strcmp(p.label, "SPEED") == 0) {
-      p.ecu = kSpeedEcu; p.group = kSpeedGroup; p.valueIndex = kSpeedVi;
-      presets_.save(storage_);
+      p.ecu = kSpeedEcu; p.group = kSpeedGroup; p.valueIndex = kSpeedVi; migrated = true;
+    } else if (p.ecu == ecu::Engine && p.group == 1 && p.valueIndex == 2 &&
+               std::strcmp(p.label, "COOLANT") == 0) {
+      p.valueIndex = 3; migrated = true;
+    } else if (p.ecu == ecu::Engine && p.group == 11 && p.valueIndex == 0 &&
+               std::strcmp(p.label, "BOOST") == 0) {
+      p.valueIndex = 2; migrated = true;
     }
   }
+  if (migrated) presets_.save(storage_);
 }
 
 // Best label to show for the current call: resolved contact name > caller number

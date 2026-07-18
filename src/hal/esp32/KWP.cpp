@@ -579,6 +579,8 @@ bool KWP::readConnectBlocks() {
   }
   Serial.print("label=");
   Serial.println(info);
+  ecuId = info;                       // part number + name, e.g. "038906018AH 1,9l R4 EDC ..."
+  dbg += "id: "; dbg += info; dbg += "\n";
   return true;
 }
 

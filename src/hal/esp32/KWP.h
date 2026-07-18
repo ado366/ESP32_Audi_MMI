@@ -50,7 +50,8 @@ class KWP {
       if (interByteMs >= 0) interByteMs_ = interByteMs;
       if (blockDelayMs >= 0) blockDelayMs_ = blockDelayMs;
     }
-    String dbg;   // recent connect-flow trace, surfaced over WiFi for on-car debug
+    String dbg;     // recent connect-flow trace, surfaced over WiFi for on-car debug
+    String ecuId;   // connect-block ASCII: part number + ECU name
     // KWP1281 stored fault codes. readFaultCodes returns the count read (or -1 on
     // comms error); each DTC is a 16-bit code + 1-byte elaboration/status.
     int readFaultCodes(uint16_t codes[], uint8_t info[], int maxCodes);
