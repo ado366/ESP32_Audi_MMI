@@ -81,11 +81,12 @@ void setup() {
     };
     std::string dev = san(s.activeDeviceName.c_str()), title = san(s.title.c_str());
     std::string rl1 = san(radio.line1()), rl2 = san(radio.line2());
-    char b[520];
+    std::string tune = san(diag.autoTuneStatus().c_str());   // KWP auto-tune progress/result
+    char b[640];
     snprintf(b, sizeof(b),
       "{\"up_s\":%lu,\"heap\":%u,\"link\":%s,\"dev\":\"%s\",\"play\":%s,\"call\":%d,"
       "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"cd\":%s,\"rl1\":\"%s\",\"rl2\":\"%s\","
-      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d,\"acts\":\"%s\"}",
+      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d,\"tune\":\"%s\",\"acts\":\"%s\"}",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
       s.linked ? "true" : "false", dev.c_str(), s.playing ? "true" : "false",
       (int)s.call, s.scoOpen ? "true" : "false", title.c_str(),
@@ -93,7 +94,7 @@ void setup() {
       radio.cdMode() ? "true" : "false", rl1.c_str(), rl2.c_str(),
       (unsigned long)diag.readCount(),
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
-      app ? (int)app->context() : -1,
+      app ? (int)app->context() : -1, tune.c_str(),
       app ? app->actionTrace().c_str() : "");   // recent actions: catch phantom inputs
     return std::string(b);
   });
@@ -101,10 +102,13 @@ void setup() {
                       []() { return bt.recentLog(); });
   ota.setKwpLog([]() { return diag.kwpDebug(); });   // KWP connect trace at /kwpdbg
   ota.setKwpProbe([](int rx, int tx) { diag.requestProbe(rx, tx); }); // K-line loopback at /kwpprobe
+  ota.setKwpFastInit([](uint8_t e) { diag.requestFastInit(e); });     // ISO14230 fast-init probe at /kwpfastinit
   ota.setFisRect([](uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t m) {  // TLB no-claim 0x53 probe
     return (int)display.probeRect(x, y, w, h, m);
   });
   ota.setKwpTest([](uint8_t e, uint8_t g) { diag.requestRead(e, g); });  // connect+read at /kwptest
+  ota.setKwpTiming([](int i, int b, int f) { diag.setTiming(i, b, f); }); // live W4 tune at /kwptiming
+  ota.setKwpTune([]() { diag.startAutoTune(); });   // start the timing auto-tuner at /kwptune
   // Browser control/debug UI at http://192.168.4.1/control — drive the whole UI
   // from a computer (no car buttons needed) and see the live FIS.
   ota.setControlHooks(

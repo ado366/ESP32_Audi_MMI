@@ -41,6 +41,14 @@ class KWP {
     bool isConnected();
     uint8_t getCurrAddr();
     String probe(int rxPin = -1, int txPin = -1);   // K-line loopback self-test (writes result to dbg)
+    // ISO 14230-2 (KWP2000) fast-init PROBE. Non-invasive: wakes the K-line with
+    // the 25ms/25ms init pattern, sends a StartCommunication request and reports
+    // the raw ECU reply. Read-only; does NOT open a session or touch KWP1281
+    // state. Answers "does this ECU speak KWP2000 fast-init?" — if it does, the
+    // whole engine path could migrate off the slow 5-baud KWP1281 init. Result
+    // (also written to dbg, so /kwpdbg surfaces it) reports each target address
+    // tried; a positive StartComm reply is 83 F1 <addr> C1 <KB1> <KB2> <cs>.
+    String fastInitProbe(uint8_t addr);
     // Per-vehicle KWP1281 timing (Maxi-K "Adaptation"). initBitMs = 5-baud bit
     // period (~200); interByteMs = inter-byte W4 pause before each complement ACK
     // (0 = as fast as possible; raise it if an ECU drops blocks); blockDelayMs =
@@ -52,6 +60,11 @@ class KWP {
     }
     String dbg;     // recent connect-flow trace, surfaced over WiFi for on-car debug
     String ecuId;   // connect-block ASCII: part number + ECU name
+    // True once the last connect() saw the 0x55 0x01 0x8A sync — i.e. the baud is
+    // correct for this address, even if a LATER stage (connect blocks / noise on a
+    // running engine) then failed. Lets the caller keep the proven baud instead of
+    // flapping to the wrong one on every failure. See Esp32Diag::ensureConnected.
+    bool magicOk = false;
     // KWP1281 stored fault codes. readFaultCodes returns the count read (or -1 on
     // comms error); each DTC is a 16-bit code + 1-byte elaboration/status.
     int readFaultCodes(uint16_t codes[], uint8_t info[], int maxCodes);

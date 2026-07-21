@@ -81,12 +81,37 @@ public:
       if (kwpProbe_) kwpProbe_(rx, tx);
       server_.send(200, "text/plain", "probing K-line; read /kwpdbg in ~1s");
     });
+    // Non-invasive ISO 14230 fast-init probe (?ecu=<hex>, default 01=engine).
+    // Reports whether the ECU answers KWP2000 fast-init; result at /kwpdbg. Does
+    // NOT disturb the live KWP1281 flow. Run with the engine ECU powered.
+    server_.on("/kwpfastinit", HTTP_GET, [this]() {
+      int ecu = server_.hasArg("ecu") ? strtol(server_.arg("ecu").c_str(), nullptr, 16) : 0x01;
+      if (kwpFastInit_) kwpFastInit_((uint8_t)ecu);
+      server_.send(200, "text/plain", "fast-init probing; read /kwpdbg in ~2s");
+    });
     // Trigger a KWP connect+read of ?ecu=<hex>&grp=<n> (debug); trace at /kwpdbg.
     server_.on("/kwptest", HTTP_GET, [this]() {
       int ecu = strtol(server_.arg("ecu").c_str(), nullptr, 16);
       int grp = server_.hasArg("grp") ? server_.arg("grp").toInt() : 1;
       if (kwpTest_) kwpTest_((uint8_t)ecu, (uint8_t)grp);
       server_.send(200, "text/plain", "connecting; read /kwpdbg");
+    });
+    // Live KWP timing tune (Adaptation): ?init=<ms>&byte=<ms>&frame=<ms>. Any
+    // omitted field keeps its current default. For sweeping inter-byte (W4) while
+    // hunting the most reliable value on a noisy running-engine K-line.
+    server_.on("/kwptiming", HTTP_GET, [this]() {
+      int init  = server_.hasArg("init")  ? server_.arg("init").toInt()  : 200;
+      int byte  = server_.hasArg("byte")  ? server_.arg("byte").toInt()  : 0;
+      int frame = server_.hasArg("frame") ? server_.arg("frame").toInt() : 0;
+      if (kwpTiming_) kwpTiming_(init, byte, frame);
+      char r[48]; snprintf(r, sizeof(r), "timing init=%d byte=%d frame=%d", init, byte, frame);
+      server_.send(200, "text/plain", r);
+    });
+    // Start the KWP timing auto-tuner (sweeps candidates, picks + persists best).
+    // Watch progress in /status ("tune" field). Engine must be running.
+    server_.on("/kwptune", HTTP_GET, [this]() {
+      if (kwpTune_) kwpTune_();
+      server_.send(200, "text/plain", "auto-tune started; watch /status tune=");
     });
     // FIS sub-rect probe (TLBFISLib no-claim 0x53 experiment): ?x=&y=&w=&h=&m=
     // m=3 fills the rect lit, m=2 clears it dark, m=0 workspace-move only.
@@ -160,8 +185,11 @@ public:
                        std::function<std::string()> log) { bcSend_ = std::move(send); bcLog_ = std::move(log); }
   void setKwpLog(std::function<std::string()> f) { kwpLog_ = std::move(f); }
   void setKwpProbe(std::function<void(int,int)> f) { kwpProbe_ = std::move(f); }
+  void setKwpFastInit(std::function<void(uint8_t)> f) { kwpFastInit_ = std::move(f); }
   void setFisRect(std::function<int(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t)> f) { fisRect_ = std::move(f); }
   void setKwpTest(std::function<void(uint8_t,uint8_t)> f) { kwpTest_ = std::move(f); }
+  void setKwpTiming(std::function<void(int,int,int)> f) { kwpTiming_ = std::move(f); }
+  void setKwpTune(std::function<void()> f) { kwpTune_ = std::move(f); }
   // Browser control/debug UI: state = display frame + BT json; sink injects inputs.
   void setControlHooks(std::function<std::string()> state,
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
@@ -246,8 +274,11 @@ private:
   std::function<std::string()> bcLog_;
   std::function<std::string()> kwpLog_;
   std::function<void(int,int)> kwpProbe_;
+  std::function<void(uint8_t)> kwpFastInit_;
   std::function<int(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t)> fisRect_;
   std::function<void(uint8_t,uint8_t)> kwpTest_;
+  std::function<void(int,int,int)> kwpTiming_;
+  std::function<void()> kwpTune_;
   std::function<std::string()> ctrlState_;
   std::function<void(Control, int)> ctrlSink_;
 };

@@ -3,7 +3,6 @@
 #include "Config.h"
 #include "ui/InputRouter.h"
 #include "ui/MenuTree.h"
-#include "ui/GraphRenderer.h"
 #include "ui/TurboGauge.h"
 #include "diag/DtcDescriptions.h"
 #include "diag/DtcElaboration.h"
@@ -40,7 +39,12 @@ void App::begin() {
   oneDevice_ = storage_.getInt("bt.single", 0) != 0;  // default OFF
   bt_.setSingleDevice(oneDevice_);
   adaptInit_  = storage_.getInt("kwp.init",  200);    // per-vehicle KWP timing
-  adaptByte_  = storage_.getInt("kwp.byte",  0);
+  // Inter-byte (W4) default 10ms: on the car, a running engine's K-line noise made
+  // the connection drop constantly at 0ms (connected ~1/12); 5ms held it 12/12 in a
+  // bench window but still dropped in real driving, so 10ms for extra settling
+  // margin (slightly lower read rate, more stable). Tunable via ADVANCED->
+  // ADAPTATION->INTER-BYTE (NVS override).
+  adaptByte_  = storage_.getInt("kwp.byte",  10);
   adaptFrame_ = storage_.getInt("kwp.frame", 0);
   diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);
   readEcu_ = static_cast<uint8_t>(storage_.getInt("diag.ecu", ecu::Engine));  // last SELECT ECU choice
@@ -156,6 +160,9 @@ void App::cycleGauge() {
 static constexpr uint8_t kSpeedEcu   = ecu::Engine;
 static constexpr uint8_t kSpeedGroup = 6;
 static constexpr uint8_t kSpeedVi    = 0;
+// The ECU's grp6 speed reads ~2 km/h under a GPS reference; add it back on the
+// full-screen speedo, but leave a genuine 0 as 0 (no phantom "2" while stopped).
+static constexpr int     kSpeedoOffsetKmh = 2;
 
 // Seed a few useful favourites on first boot so the gauges work out-of-box (the
 // Favourites list was empty, hiding the whole feature). All gauges read the
@@ -245,6 +252,52 @@ bool App::isDiagScreen() const {
   return screen_ == Screen::DiagFavourites || screen_ == Screen::DiagReadGroup ||
          screen_ == Screen::DiagGraph || screen_ == Screen::DiagBoost ||
          screen_ == Screen::DiagFaults || screen_ == Screen::Speedo;
+}
+
+// The current screen renders the rolling line graph (standalone GRAPH VALUE, or a
+// favourite whose view is Graph).
+bool App::isGraphView() const {
+  if (screen_ == Screen::DiagGraph) return true;
+  if (screen_ == Screen::DiagFavourites && presets_.size() > 0)
+    return presets_.at(diagPresetIdx_).view == View::Graph;
+  return false;
+}
+
+// Feed one freshly-read sample into the rolling scope. Presets plot on their fixed
+// min/max; the standalone graph auto-scales, but since a rolling scope can't
+// rescale columns already drawn, it locks the auto-scale at the start of each
+// left-to-right sweep (and on the very first sample).
+void App::pushScopeSample() {
+  bool preset = screen_ == Screen::DiagFavourites && presets_.size() > 0;
+  int vi = preset ? presets_.at(diagPresetIdx_).valueIndex : graphVal_;
+  if (vi >= group_.count) return;
+  // Restart the sweep whenever the plotted signal changes (group/value/preset/
+  // dual toggle) so the graph never mixes two signals on one screen.
+  uint32_t key = preset ? (0x2000000u | static_cast<uint32_t>(diagPresetIdx_))
+                        : ((static_cast<uint32_t>(readGroup_) << 8) |
+                           static_cast<uint32_t>(graphVal_) | (graphDual_ ? 0x10000u : 0u));
+  if (key != scopeKey_) { scope_.reset(); scopeLocked_ = false; scopeKey_ = key; }
+  float v = group_.values[vi].value;
+  float mn, mx;
+  if (preset) { const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max; }
+  else {
+    if (!scopeLocked_ || scope_.atSweepStart()) {
+      mn = mx = graph_.empty() ? v : graph_[0];
+      for (float s : graph_) { if (s < mn) mn = s; if (s > mx) mx = s; }
+      if (v < mn) mn = v; if (v > mx) mx = v;
+      float pad = (mx - mn) * 0.1f; if (pad < 1.f) pad = 1.f;
+      scopeMin_ = mn - pad; scopeMax_ = mx + pad; scopeLocked_ = true;
+    }
+    mn = scopeMin_; mx = scopeMax_;
+  }
+  if (mx <= mn) mx = mn + 1;
+  auto yOf = [&](float val) {
+    float t = (val - mn) / (mx - mn); if (t < 0) t = 0; if (t > 1) t = 1;
+    return static_cast<int>((1.f - t) * (GraphScope::kH - 1) + 0.5f);
+  };
+  bool dual = screen_ == Screen::DiagGraph && graphDual_ && group_.count > 1;
+  int y2 = dual ? yOf(group_.values[(graphVal_ + 1) % group_.count].value) : 0;
+  scope_.push(yOf(v), kScopeStep, kScopeGap, dual, y2);
 }
 
 void App::tick(uint32_t nowMs) {
@@ -338,8 +391,15 @@ void App::tick(uint32_t nowMs) {
   {
     CallState c = bt_.status().call;
     if (c != prevCall_) {
-      if (c == CallState::Active && prevCall_ != CallState::Active) { callStartMs_ = now_; lastCallSec_ = 0; }
-      if (c == CallState::Idle) { dialedName_.clear(); dialedNumber_.clear(); }
+      if (c == CallState::Active && prevCall_ != CallState::Active) { callStartMs_ = now_; lastCallSec_ = 0; callWasActive_ = true; }
+      if (c == CallState::Idle) {
+        dialedName_.clear(); dialedNumber_.clear();
+        // A call that actually connected ends at the home screen — don't strand the
+        // driver back on the phonebook/recents menu they dialled from. A call that
+        // never connected (cancelled/rejected) leaves the screen untouched.
+        if (callWasActive_) { menuOpen_ = false; screen_ = Screen::None; }
+        callWasActive_ = false;
+      }
       prevCall_ = c; dirty_ = true;
     }
     if (c == CallState::Active) {                 // repaint the M:SS timer once per second
@@ -348,19 +408,25 @@ void App::tick(uint32_t nowMs) {
     }
   }
 
-  // Leaving the diag screens: idle the KWP task and drop the K-line, so it
-  // doesn't keep reading/reconnecting in the background (e.g. during a call).
-  {
-    bool diagNow = isDiagScreen();
-    if (!diagNow && wasDiag_) diag_.stopReading();
-    wasDiag_ = diagNow;
-  }
+  // KWP session: connect once and HOLD it. setActive controls the read cadence —
+  // fast while a gauge is on screen, a slow keep-alive otherwise — instead of
+  // disconnecting on every screen exit (each reconnect is a ~15-20s cold handshake
+  // through the running-engine noise). A call also drops to keep-alive so there's
+  // no fast-read churn while the call screen is up.
+  diag_.setActive(isDiagScreen() && bt_.status().call == CallState::Idle);
+
+  // Auto-tuner finished: adopt + persist the winning KWP timing (fires once).
+  { int ti, tb, tf;
+    if (diag_.takeAutoTuneResult(ti, tb, tf)) {
+      adaptInit_ = ti; adaptByte_ = tb; adaptFrame_ = tf; adaptSave();
+      showInfo("AUTO TUNE", { "DONE", diag_.autoTuneStatus() });
+    } }
 
   // Live diagnostics polling. Groups refresh fast; faults are read (async on
   // hardware) at a slower cadence.
   if (isDiagScreen()) {
     uint32_t interval = (screen_ == Screen::DiagFaults) ? 400u
-                      : (screen_ == Screen::Speedo)     ? 150u    // per-digit cells are cheap (~2 pkts/digit)
+                      : (screen_ == Screen::Speedo)     ? 250u    // whole 64x20 number bitmap; don't outpace the send
                       : (screen_ == Screen::DiagBoost)  ? 250u    // rects are cheap, but no need for more
                       : (screen_ == Screen::DiagGraph)  ? 300u    // 64x64 plot = 512B/redraw; 150ms saturated
                       : 150u;                                     //   the bus and froze the loop in 140ms blocks
@@ -375,6 +441,20 @@ void App::tick(uint32_t nowMs) {
       screen_ == Screen::Bc127Debug ||
       screen_ == Screen::DiagFaults || screen_ == Screen::Phonebook ||
       screen_ == Screen::RecentCalls) dirty_ = true; // live (marquee long names)
+
+  // Auto-retry a PBAP recall that came up empty. The first pull (fired when the
+  // screen opened) can silently no-op if the active phone isn't resolved yet, or
+  // the PBAP OPEN can fail; without this the screen just sits on "SYNCING". Retry
+  // a bounded number of times while the screen is open and a phone is linked.
+  if (screen_ == Screen::Phonebook || screen_ == Screen::RecentCalls) {
+    bool empty = (screen_ == Screen::Phonebook) ? phonebook_.size() == 0
+                                                : callHistory_.size() == 0;
+    if (empty && bt_.status().linked && screenPullTries_ < kScreenPullMaxTries &&
+        now_ - screenPullMs_ > kScreenPullRetryMs) {
+      screenPullMs_ = now_; ++screenPullTries_;
+      if (screen_ == Screen::Phonebook) bt_.pullPhonebook(); else bt_.pullCallHistory();
+    }
+  }
   // DiagBoost re-renders on its 250ms sample only (above); no per-tick animation.
   // The FIS bus is too slow to spin the wheel without starving the keepalive.
   // Speedo renders on its 150ms sample (isDiagScreen); the display redraws the
@@ -567,8 +647,8 @@ bool App::handleScreen(Action a) {
   }
   if (screen_ == Screen::DiagGraph) {
     switch (a) {
-      case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
-      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::ScrollDown: readGroup_++; saveDiagGroup(); group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; saveDiagGroup(); group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
       case Action::Select:     // cycle WHICH value of the group is plotted
         graphVal_ = (graphVal_ + 1) % 4;
         graph_.clear(); graph2_.clear(); dirty_ = true; return true;
@@ -581,8 +661,8 @@ bool App::handleScreen(Action a) {
   }
   if (screen_ == Screen::DiagReadGroup) {
     switch (a) {
-      case Action::ScrollDown: readGroup_++; group_.count = 0; graph_.clear(); dirty_ = true; return true;
-      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; group_.count = 0; graph_.clear(); dirty_ = true; return true;
+      case Action::ScrollDown: readGroup_++; saveDiagGroup(); group_.count = 0; graph_.clear(); dirty_ = true; return true;
+      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; saveDiagGroup(); group_.count = 0; graph_.clear(); dirty_ = true; return true;
       case Action::Select:     startAddFavourite(); return true;   // add current group as a favourite
       case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
       default: return false;
@@ -679,7 +759,12 @@ void App::finalizeName() {
 void App::openScreen(Screen s) {
   screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0; group_.count = 0;  // no stale values
   graph2_.clear(); graphHdr_.clear(); graphHdrMs_ = 0;
+  scope_.reset(); scopeLocked_ = false;   // restart the rolling graph from the left
   if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); diag_.readFaults(readEcu_, faults_); }
+  if (s == Screen::Phonebook || s == Screen::RecentCalls) {   // arm the empty-recall retry
+    screenPullTries_ = 0; screenPullMs_ = now_;   // initial pull already fires in onMenuSelect
+  }
+  if (s == Screen::DiagBoost) atmoBar_ = -1.0f;   // re-read the atmospheric baseline for the boost gauge
   dirty_ = true;
 }
 
@@ -711,8 +796,8 @@ void App::onMenuSelect(MenuId id) {
       break;
     case MenuId::DiagSpeedo:     openScreen(Screen::Speedo);         break;
     case MenuId::DiagFavourites: openScreen(Screen::DiagFavourites); break;
-    case MenuId::DiagReadGroup:  readGroup_ = 2; openScreen(Screen::DiagReadGroup); break;
-    case MenuId::DiagGraph:      readGroup_ = 2; openScreen(Screen::DiagGraph);     break;
+    case MenuId::DiagReadGroup:  readGroup_ = storage_.getInt("diag.group", 2); openScreen(Screen::DiagReadGroup); break;
+    case MenuId::DiagGraph:      readGroup_ = storage_.getInt("diag.group", 2); openScreen(Screen::DiagGraph);     break;
     case MenuId::DiagBoost:      readEcu_ = ecu::Engine; readGroup_ = 11; openScreen(Screen::DiagBoost); break;  // TURBO: engine grp 11 field 3 (boost, mbar->bar)
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
 
@@ -720,6 +805,8 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::AdaptInit:      adaptField_ = 0; openScreen(Screen::Adapt); break;
     case MenuId::AdaptByte:      adaptField_ = 1; openScreen(Screen::Adapt); break;
     case MenuId::AdaptFrame:     adaptField_ = 2; openScreen(Screen::Adapt); break;
+    case MenuId::AdaptAutoTune:  diag_.startAutoTune();
+                                 showInfo("AUTO TUNE", {"SWEEPING K-LINE", "ENGINE ON, ~3 MIN", "SAVES BEST AUTO"}); break;
 
     // ---- Debug ----
     case MenuId::DbgMicTest:      openScreen(Screen::MicTest);        break;
@@ -782,6 +869,17 @@ void App::syncPhonebook() {
 // ---- diagnostics sampling + rendering ----
 
 void App::sampleDiag() {
+  // TURBO gauge: fetch a real atmospheric baseline once (engine grp10 value 2)
+  // before reading boost, so the gauge shows true boost = absolute MAP minus the
+  // actual ambient pressure (tracks altitude/weather) instead of a fixed 1 bar.
+  // Reading grp10 is just a same-ECU group switch (no reconnect). Once we have it,
+  // fall through to the boost group every sample.
+  if (screen_ == Screen::DiagBoost && atmoBar_ < 0) {
+    Group g10;
+    if (diag_.readGroup(ecu::Engine, 10, g10) && g10.count > 1)
+      atmoBar_ = g10.values[1].value / 1000.0f;   // grp10 value 2 (index 1) = ambient pressure, mbar->bar
+    return;                                        // spend this sample on atmospheric; boost resumes next
+  }
   uint8_t e = readEcu_, g = readGroup_;
   int vi = 0;
   if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
@@ -803,6 +901,7 @@ void App::sampleDiag() {
     graph2_.push_back(group_.values[v2].value);
     if (static_cast<int>(graph2_.size()) > kGraphW) graph2_.erase(graph2_.begin());
   }
+  if (isGraphView()) pushScopeSample();   // advance the rolling scope one column
 }
 
 void App::renderDiag() {
@@ -810,35 +909,36 @@ void App::renderDiag() {
 
   if (screen_ == Screen::Speedo) {
     display_.beginFullScreen(true);                  // full-screen (known-good)
-    int spd;
+    int spd = 0;
+    bool haveSpeed = speedoTest_ || group_.count > kSpeedVi;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
       int p = static_cast<int>((now_ / 50) % 402u);
       spd = p < 201 ? p : 401 - p;
-    } else {
-      spd = group_.count > kSpeedVi ? static_cast<int>(group_.values[kSpeedVi].value + 0.5f) : 0;
+    } else if (haveSpeed) {
+      spd = static_cast<int>(group_.values[kSpeedVi].value + 0.5f);
+      if (spd > 0) spd += kSpeedoOffsetKmh;   // GPS-calibrated: ECU reads ~2 km/h low; keep 0 at 0
     }
     std::string l1, l2; nowPlayingLines(l1, l2);     // identical to home's top two rows
     l1 = marquee(l1, kWin); l2 = marquee(l2, kWin);                                 // same font+window as home
     if (!l1.empty()) display_.drawText(0, 3,  kFontCentered, l1.c_str());           // standard font (like home), 3px top
     if (!l2.empty()) display_.drawText(0, 13, kFontCentered, l2.c_str());
-    // PER-DIGIT cells at fixed slots: only a changed digit re-sends (~2 packets
-    // via the narrow-workspace path), so digits can be BIGGER than the old
-    // whole-number bitmap (which starved the keepalive when speed changed fast).
-    {
-      // Center the VISIBLE digits: "%3d" space-padding left a blank leading
-      // cell below 100 km/h, shifting the number visually to the right. Cell
-      // positions only move when the digit COUNT changes (9<->10, 99<->100),
-      // so the changed-digit-only resend still holds at steady count.
-      char s[8]; std::snprintf(s, sizeof(s), "%d", spd < 0 ? 0 : (spd > 999 ? 999 : spd));
-      const int nd = static_cast<int>(std::strlen(s));
-      const int dw = 16, dh = 28, gap = 4;
-      const int x0 = (64 - (nd * dw + (nd - 1) * gap)) / 2;
-      for (int i = 0; i < nd; ++i) {
-        auto cell = SpeedoRenderer::digitCell(s[i], dw, dh, 3);
-        display_.drawBitmap(static_cast<uint8_t>(x0 + i * (dw + gap)), 34,
-                            static_cast<uint8_t>(dw), static_cast<uint8_t>(dh), cell.data());
-      }
+    // When there's no speed value, fill the number area with an explicit message
+    // instead of a lone (easily-dropped) "0". An empty number area was what let the
+    // now-playing marquee up top look like it was scrolling in the speed's place.
+    if (!haveSpeed) {
+      display_.drawText(0, 40, kFontCentered, "NO SPEED");
+      display_.drawText(0, 56, kFontCompressedCenter, "KWP NOT CONNECTED");
+      return;
     }
+    // Whole-number 64-wide bitmap (restored from v2.8.0, car-proven). A 64px width
+    // uses the FIS GraphicFromArray path directly and renders clean; the per-digit
+    // 16x28 cells that replaced it went through the narrow workspace-move path
+    // (3 cells, each a workspace move + draw + reset) and GLITCHED on the cluster.
+    // Kept small (64x20): a taller bitmap takes too long to send and starves the
+    // keepalive when speed changes fast (froze the cluster). render() centers the
+    // digits itself, so no leading-cell shift.
+    auto bmp = SpeedoRenderer::render(spd < 0 ? 0 : (spd > 999 ? 999 : spd), 64, 20);
+    display_.drawBitmap(0, 38, 64, 20, bmp.data());
     display_.drawText(44, 66, kFontCompressedLeft, "KM/H");
     return;
   }
@@ -924,13 +1024,19 @@ void App::renderDiag() {
       if (!l1.empty()) display_.drawText(0, 3,  kFontCentered, l1.c_str());           // standard font (like home), 3px top
       if (!l2.empty()) display_.drawText(0, 13, kFontCentered, l2.c_str()); }
 
-    float bar, mx = 2.5f; std::string valStr; int duty = 0;
+    float bar, mx = 2.5f; std::string valStr;
     if (screen_ == Screen::DiagBoost) {
-      // Hardcoded: Engine (0x01) group 11 field 3 (index 2) = boost pressure in
-      // mbar -> bar; field 4 (index 3) = turbo duty cycle %.
+      // Engine (0x01) group 11 field 3 (index 2) = ABSOLUTE manifold pressure in
+      // mbar. Field 4 (duty cycle) is intentionally NOT shown — this car runs a
+      // GTD1752VRK with an electronic actuator, so that field always reads 0.
       Measurement m = 2 < group_.count ? group_.values[2] : Measurement{};
-      bar = m.value / 1000.0f;
-      duty = 3 < group_.count ? static_cast<int>(group_.values[3].value + 0.5f) : 0;
+      // GAUGE (boost) pressure in bar: absolute MAP minus the real atmospheric
+      // baseline (engine grp10 v2, cached in atmoBar_; ~1 bar fallback until read),
+      // so idle/atmospheric reads 0. Clamp off vacuum. Full scale 1.8 bar so the
+      // car's ~1.8 bar peak fills every bar.
+      bar = m.value / 1000.0f - (atmoBar_ > 0 ? atmoBar_ : 1.0f);
+      if (bar < 0) bar = 0;
+      mx = 1.8f;
       // No demo/test sweep: with no live KWP data the bars stay empty and the
       // readout shows dashes (see below). Real EDC15 grp 11 drives everything.
     } else {                                     // favourite preset keeps its own scale/value
@@ -971,26 +1077,18 @@ void App::renderDiag() {
     // then repaints only the glyphs that actually changed — 88% -> 81% updates
     // one digit; the '.' in the boost value never repaints at all.
     if (screen_ == Screen::DiagBoost) {
-      char v1[8], v2[8];
-      if (group_.count > 2) {
-        std::snprintf(v1, sizeof(v1), "%.1f", bar);   // always 3 chars: X.Y
-        std::snprintf(v2, sizeof(v2), "%3d", duty);   // always 3 chars, space-padded
-      } else {                                        // KWP not connected / no data
-        std::snprintf(v1, sizeof(v1), "-.-");
-        std::snprintf(v2, sizeof(v2), " --");
-      }
+      char v1[8];
+      if (group_.count > 2) std::snprintf(v1, sizeof(v1), "%.1f", bar);   // always 3 chars: X.Y
+      else                  std::snprintf(v1, sizeof(v1), "-.-");         // KWP not connected / no data
       char c[2] = {0, 0};
-      // Boost X.Y with a NARROW 3px cell for the '.' (its glyph is ~2px; a full
-      // 5px digit cell left a weird gap between the dot and the tenths digit).
-      c[0] = v1[0]; display_.drawTextOverlay(8,  24, kFontCompressedLeft, 5, c);  // integer digit
-      c[0] = v1[1]; display_.drawTextOverlay(13, 24, kFontCompressedLeft, 3, c);  // '.' (static)
-      c[0] = v1[2]; display_.drawTextOverlay(16, 24, kFontCompressedLeft, 5, c);  // tenths digit
-      display_.drawTextOverlay(26, 24, kFontCompressedLeft, 15, "BAR");   // static
-      for (int i = 0; i < 3; ++i) {                                       // duty digits, 5px cells
-        c[0] = v2[i];
-        display_.drawTextOverlay(static_cast<uint8_t>(42 + i * 5), 24, kFontCompressedLeft, 5, c);
-      }
-      display_.drawTextOverlay(57, 24, kFontCompressedLeft, 6,  "%");     // static
+      // "X.Y BAR" centred on the row (duty removed). Per-char fixed slots so the
+      // differ repaints only the digit that changed; '.' uses a NARROW 3px cell
+      // (its glyph is ~2px; a full 5px cell left a gap before the tenths digit).
+      const int bx = 15;                                                          // centred group start
+      c[0] = v1[0]; display_.drawTextOverlay(bx,      24, kFontCompressedLeft, 5, c);   // integer digit
+      c[0] = v1[1]; display_.drawTextOverlay(bx + 5,  24, kFontCompressedLeft, 3, c);   // '.'
+      c[0] = v1[2]; display_.drawTextOverlay(bx + 8,  24, kFontCompressedLeft, 5, c);   // tenths digit
+      display_.drawTextOverlay(bx + 18, 24, kFontCompressedLeft, 15, "BAR");            // static
     } else {
       display_.drawTextOverlay(0, 24, kFontCompressedCenter, 64, valStr.c_str());
     }
@@ -998,25 +1096,8 @@ void App::renderDiag() {
   }
 
   if (view == View::Graph) {
-    bool dual = screen_ == Screen::DiagGraph && graphDual_ && !graph2_.empty();
-    float mn = 0, mx = 5000, g1 = -1e9f, g2 = -1e9f;
-    if (screen_ == Screen::DiagFavourites && presets_.size() > 0) {
-      const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max; g1 = p.guide1; g2 = p.guide2;
-    } else if (!graph_.empty()) {
-      // Standalone GRAPH VALUE: auto-scale to the data so any value plots a
-      // visible line (a fixed 0..5000 scale flat-lines coolant temp, boost, etc).
-      // A dual trace shares the scale so the two series are comparable.
-      mn = mx = graph_[0];
-      for (float v : graph_) { if (v < mn) mn = v; if (v > mx) mx = v; }
-      if (dual) for (float v : graph2_) { if (v < mn) mn = v; if (v > mx) mx = v; }
-      float pad = (mx - mn) * 0.1f; if (pad < 1.f) pad = 1.f;   // margin; avoid zero range
-      mn -= pad; mx += pad;
-    }
-    // Plot fills the BOTTOM 2/3 of the screen (y24..87, full width) — the same
-    // band the gauges use; previously 48 rows at y16 left the bottom quarter dark.
-    auto bmp = GraphRenderer::render(graph_, mn, mx, kGraphW, 64, g1, g2,
-                                     dual ? &graph2_ : nullptr);
     display_.beginFullScreen(true);
+    bool dual = screen_ == Screen::DiagGraph && graphDual_ && group_.count > 1;
     if (screen_ == Screen::DiagGraph) {
       // Header: group + which value(s) + live reading. SEL cycles the value,
       // RETURN toggles the dotted second trace (the next value in the group).
@@ -1036,11 +1117,15 @@ void App::renderDiag() {
       std::snprintf(l, sizeof(l), "%s %s", header, fmt(m).c_str());
     }
     display_.drawText(0, 0, kFontCompressedLeft, l);
-    // Two 64x32 ops instead of one 64x64: halves the blocking time per
-    // service() call (~70ms vs ~140ms) and a dropped packet retries only
-    // half the plot — the single big op froze the whole loop at times.
-    display_.drawBitmap(0, kGaugeTop,      kGraphW, 32, bmp.data());
-    display_.drawBitmap(0, kGaugeTop + 32, kGraphW, 32, bmp.data() + (kGraphW / 8) * 32);
+    // Rolling "oscilloscope" plot (see GraphScope.h): the write cursor sweeps
+    // left->right, so only the strip(s) it is under change each sample. Emit the
+    // whole plot as 8 fixed-slot 8px strips; the frame differ then re-sends just
+    // the changed strip(s) instead of repainting the entire 64x64 graph.
+    uint8_t strip[GraphScope::kH];
+    for (int i = 0; i < GraphScope::kStrips; ++i) {
+      scope_.strip(i, strip);
+      display_.drawBitmap(static_cast<uint8_t>(i * 8), kGaugeTop, 8, GraphScope::kH, strip);
+    }
     return;
   }
 
@@ -1061,14 +1146,20 @@ void App::renderDiag() {
     int y = kDiagTop + i * kLineH * 2;
     if (y + kLineH + 7 > 88) break;
     std::string val = fmt(group_.values[i]);
-    int vx = 64 - static_cast<int>(val.size()) * 5;  // right-align: compressed cell = 5px
-    if (vx < 0) vx = 0;
+    // Right-align in a FIXED-width field via leading spaces, not by moving x. The
+    // old right-align recomputed the value's x from its width, so a reading that
+    // changed digit count shifted the op's x — which broke the frame differ's slot
+    // match and forced a full-screen redraw that reprinted (flashed) the labels.
+    // A fixed-slot overlay repaints ONLY the value row in place, so the labels stay
+    // put once drawn, even when the value changes or a read skips a beat.
+    const int kValCells = 12;                        // 12 * 5px compressed = 60px, fits 64
+    if (static_cast<int>(val.size()) < kValCells) val = std::string(kValCells - val.size(), ' ') + val;
     // Real VCDS field name when we have one for this ECU; the generic formula-
     // derived label is often wrong per-block (grp2 field 4 is coolant, not MAF).
     const char* lbl = (readEcu_ == ecu::Engine && screen_ == Screen::DiagReadGroup)
                           ? engineFieldLabel(readGroup_, i) : nullptr;
-    display_.drawText(0, static_cast<uint8_t>(y),          kFontCompressedLeft, lbl ? lbl : group_.values[i].label.c_str()); // label (left)
-    display_.drawText(static_cast<uint8_t>(vx), static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, val.c_str()); // value (right)
+    display_.drawText(0, static_cast<uint8_t>(y), kFontCompressedLeft, lbl ? lbl : group_.values[i].label.c_str()); // label (static -> not resent)
+    display_.drawTextOverlay(0, static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, 64, val.c_str());            // value (fixed slot -> in-place)
   }
 }
 

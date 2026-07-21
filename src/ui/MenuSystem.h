@@ -16,7 +16,7 @@ enum class MenuId : uint16_t {
   // Diagnostics
   DiagSelectEcu, DiagSpeedo, DiagFavourites, DiagReadGroup, DiagReadFaults, DiagGraph, DiagBoost, DiagDisplayMode, DiagVagcom,
   // Adaptation
-  AdaptInit, AdaptByte, AdaptFrame,
+  AdaptInit, AdaptByte, AdaptFrame, AdaptAutoTune,
   // Debug
   DbgButtonMonitor, DbgCalibrate, DbgMicTest, DbgBc127, DbgEncoder, DbgFisTest,
   // Settings

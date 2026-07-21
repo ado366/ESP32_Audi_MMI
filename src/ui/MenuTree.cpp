@@ -24,18 +24,21 @@ static const MenuItem kBluetooth[] = {
   // Hidden (unbuilt, low value): AUTOCONNECT (BtAutoConnect).
 };
 
+// The everyday diagnostic readers lead; the rarely-used module switch and the
+// button-hotkeyed gauges (Speedo=Traffic, Turbo=Info) sit at the bottom.
 static const MenuItem kDiagnostics[] = {
+  LEAF("READ GROUP", DiagReadGroup),
+  LEAF("GRAPH VALUE",DiagGraph),
+  LEAF("READ FAULTS",DiagReadFaults),
+  LEAF("FAVOURITES", DiagFavourites),
   LEAF("SELECT ECU", DiagSelectEcu),
   LEAF("SPEEDO",     DiagSpeedo),
-  LEAF("FAVOURITES", DiagFavourites),
-  LEAF("READ GROUP", DiagReadGroup),
-  LEAF("READ FAULTS",DiagReadFaults),
-  LEAF("GRAPH VALUE",DiagGraph),
   LEAF("TURBO",      DiagBoost),
   // Hidden (unbuilt, low value): DISP MODE (DiagDisplayMode), VAG-COM (DiagVagcom).
 };
 
 static const MenuItem kAdaptation[] = {
+  LEAF("AUTO TUNE",  AdaptAutoTune),   // sweep timings on the live K-line, pick the best
   LEAF("INIT PULSE", AdaptInit),
   LEAF("INTER-BYTE", AdaptByte),
   LEAF("INTER-FRAME",AdaptFrame),
@@ -86,7 +89,7 @@ const MenuItem& menuRoot() { return kRoot; }
 uint8_t diagnosticsTopIndex() {
   for (uint8_t i = 0; i < kRoot.childCount; ++i) {
     const MenuItem& c = kRoot.children[i];
-    if (c.childCount > 0 && c.children[0].id == MenuId::DiagSelectEcu) return i;
+    if (c.childCount > 0 && c.children[0].id == MenuId::DiagReadGroup) return i;
   }
   return 0;
 }

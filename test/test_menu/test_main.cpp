@@ -44,7 +44,7 @@ void test_traffic_shortcut_opens_diagnostics() {
   MenuSystem m(menuRoot());
   m.openTopLevel(diagnosticsTopIndex()); // robust to menu reordering
   TEST_ASSERT_FALSE(m.atRoot());
-  TEST_ASSERT_EQUAL_STRING("SELECT ECU", m.current().label);  // first diag item
+  TEST_ASSERT_EQUAL_STRING("READ GROUP", m.current().label);  // first diag item
 }
 
 int main(int, char**) {

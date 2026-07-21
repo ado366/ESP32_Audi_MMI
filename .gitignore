@@ -16,3 +16,6 @@ src/Secrets.h
 .DS_Store
 .vscode/
 mxk_img/
+
+# Claude Code session-continuation dumps
+*-this-session-is-being-continued-from-a-previous-c.txt

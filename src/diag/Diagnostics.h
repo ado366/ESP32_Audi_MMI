@@ -71,6 +71,22 @@ public:
   // otherwise the task keeps reading/reconnecting in the background forever
   // (observed churning during a phone call). Default no-op (emulator).
   virtual void stopReading() {}
+  // "Connect once and forget": true while a gauge is on screen (poll fast), false
+  // otherwise (slow keep-alive that HOLDS the engine session instead of dropping
+  // it, so re-opening a gauge is instant rather than a ~15-20s cold reconnect).
+  // Default no-op (emulator).
+  virtual void setActive(bool active) {}
+
+  // ---- KWP timing auto-tuner ----
+  // Sweep a set of init-pulse / inter-byte / block-delay candidates on the live
+  // K-line, scoring each by reads-per-window, and pick the most reliable. Runs in
+  // the background task; the engine must be running. Default no-ops (emulator).
+  virtual void startAutoTune() {}
+  virtual bool autoTuning() const { return false; }
+  virtual std::string autoTuneStatus() const { return ""; }   // one-line progress for display/telemetry
+  // True exactly once when a run finishes, filling the winning timing (so the
+  // caller can apply + persist it). Subsequent calls return false.
+  virtual bool takeAutoTuneResult(int& initMs, int& byteMs, int& frameMs) { return false; }
 };
 
 } // namespace mmi

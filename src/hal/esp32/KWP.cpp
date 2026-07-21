@@ -42,6 +42,7 @@ bool KWP::connect(uint8_t addr, int baudrate) {
   snprintf(db, sizeof(db), "connect a=%02X b=%d rx=%d tx=%d\n", addr, baudrate, _OBD_RX_PIN, _OBD_TX_PIN);
   dbg = db;
   blockCounter = 0;
+  magicOk = false;                 // cleared until the 0x55 01 8A sync proves the baud
   pinMode(_OBD_TX_PIN, OUTPUT);
   KWP5BaudInit(addr);
   dbg += "5baud sent, waiting reply...\n";
@@ -61,6 +62,8 @@ bool KWP::connect(uint8_t addr, int baudrate) {
   }
   connected = true;
   currAddr = addr;
+  magicOk = true;                  // baud confirmed by the sync; keep it even if the
+                                   // connect-block read below fails on a noisy K-line
   dbg += "magic OK, reading connect blocks...\n";
   if (!readConnectBlocks()) { dbg += "readConnectBlocks failed\n"; return false; }
   dbg += "CONNECTED\n";
@@ -96,6 +99,57 @@ String KWP::probe(int rxPin, int txPin) {
   Serial2.end();
   dbg = s;
   return s;
+}
+
+// ISO 14230-2 fast-init probe. See the header for intent. We try the ECU's own
+// physical address first, then the ISO 14230-4 functional address 0x33, since
+// VAG KWP2000 ECUs vary on which they answer. Everything is reported into the
+// returned String (and dbg) — the caller only reads, it never commits to a
+// KWP2000 session here.
+String KWP::fastInitProbe(uint8_t addr) {
+  connected = false;
+  magicOk = false;
+  String out = "fast-init probe a=";
+  { char b[8]; snprintf(b, sizeof(b), "%02X\n", addr); out += b; }
+
+  uint8_t targets[2] = { addr, 0x33 };
+  for (int t = 0; t < 2; ++t) {
+    uint8_t tgt = targets[t];
+    // --- fast-init wake pulse, bit-banged on TX (line idle high, 25ms low, 25ms high) ---
+    Serial2.end();
+    pinMode(_OBD_TX_PIN, OUTPUT);
+    digitalWrite(_OBD_TX_PIN, HIGH);
+    delay(300);                                    // ensure the bus has been idle (> W5)
+    digitalWrite(_OBD_TX_PIN, LOW);   delay(25);   // TiniL = 25ms
+    digitalWrite(_OBD_TX_PIN, HIGH);  delay(25);   // TiniH = 25ms
+    // --- StartCommunication (SID 0x81) at 10400 8N1: Fmt Tgt Src SID CS ---
+    Serial2.begin(10400, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
+    while (Serial2.available()) Serial2.read();    // drain
+    uint8_t req[4] = { 0xC1, tgt, 0xF1, 0x81 };
+    uint8_t cs = 0; for (int i = 0; i < 4; ++i) cs += req[i];
+    for (int i = 0; i < 4; ++i) obdWrite(req[i]); // obdWrite drops each byte's half-duplex echo
+    obdWrite(cs);
+    // --- capture the reply (initial 400ms window, extended 60ms per byte) ---
+    uint8_t rx[16]; int n = 0;
+    unsigned long deadline = millis() + 400;
+    while ((long)(millis() - deadline) < 0 && n < 16) {
+      if (Serial2.available()) { rx[n++] = (uint8_t)Serial2.read(); deadline = millis() + 60; }
+    }
+    { char b[24]; snprintf(b, sizeof(b), "tgt %02X -> %d:", tgt, n); out += b; }
+    for (int i = 0; i < n; ++i) { char b[6]; snprintf(b, sizeof(b), " %02X", rx[i]); out += b; }
+    if (n >= 6 && rx[0] == 0x83 && rx[3] == 0xC1) {  // positive StartComm response
+      char b[48]; snprintf(b, sizeof(b), "  <- KWP2000 OK (KB %02X %02X)\n", rx[4], rx[5]); out += b;
+      out += "RESULT: fast-init SUPPORTED -> KWP2000 path is viable\n";
+      Serial2.end();
+      dbg = out;
+      return out;
+    }
+    out += (n == 0 ? "  (no reply)\n" : "  (unexpected)\n");
+    Serial2.end();
+  }
+  out += "RESULT: no fast-init response -> ECU is KWP1281-only (keep 5-baud)\n";
+  dbg = out;
+  return out;
 }
 
 // KWP1281: request stored fault codes (title 0x07). The ECU replies with one or

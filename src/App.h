@@ -8,6 +8,7 @@
 #include "hal/IStorage.h"
 #include "hal/Types.h"
 #include "ui/MenuSystem.h"
+#include "ui/GraphScope.h"
 #include "bt/BluetoothManager.h"
 #include "bt/Phonebook.h"
 #include "diag/Diagnostics.h"
@@ -63,6 +64,8 @@ private:
   void renderCalibrate();
   void sampleDiag();             // periodic measuring-value read while a diag screen is open
   bool isDiagScreen() const;
+  bool isGraphView() const;      // the current screen shows the rolling-scope line graph
+  void pushScopeSample();        // feed one sample into the rolling graph (scale-aware)
   Context deriveContext() const;
   bool canSwitchPhone() const;   // CD mode + paused + 2 phones -> encoder switches source
   void switchPhone(int dir);
@@ -101,8 +104,14 @@ private:
 
   // Diagnostics working state
   Group              group_;          // last measuring group read
-  std::vector<float> graph_;          // ring of samples for the graph view
+  std::vector<float> graph_;          // ring of samples (drives the standalone auto-scale)
   std::vector<float> graph2_;         // second series (dual-trace graph, dotted)
+  GraphScope         scope_;          // rolling left-to-right graph buffer (FIS-Control style)
+  float              scopeMin_ = 0, scopeMax_ = 1;  // scale locked per sweep (standalone auto-scale)
+  bool               scopeLocked_ = false;
+  uint32_t           scopeKey_ = 0xFFFFFFFF;         // (ecu/group/value/preset) currently plotted; change -> restart
+  static constexpr int kScopeStep = 2;   // px the cursor advances per sample
+  static constexpr int kScopeGap  = 4;   // px cleared ahead of the cursor (the visible cut)
   int                graphVal_ = 0;   // which group value the graph plots (0..3)
   bool               graphDual_ = false; // also plot the NEXT value as a dotted trace
   std::string        graphHdr_;       // graph header, rate-limited (full-row repaint)
@@ -115,7 +124,8 @@ private:
   bool               oneDevice_ = false;     // single-active-device enforcement (persisted)
   bool               speedoTest_ = false;    // speedo bench-test sweep 0..200
   int                adaptInit_ = 200;       // KWP 5-baud bit period (ms), persisted
-  int                adaptByte_ = 0;         // KWP inter-byte W4 (ms), persisted
+  int                adaptByte_ = 10;        // KWP inter-byte W4 (ms), persisted (10 = extra margin on noisy running-engine K-line)
+  float              atmoBar_ = -1.0f;       // cached atmospheric pressure (engine grp10 v2), for true boost; <0 = not read yet
   int                adaptFrame_ = 0;        // KWP inter-frame W3 (ms), persisted
   int                adaptField_ = 0;        // which field the Adapt screen edits (0/1/2)
   uint8_t            charsetRow_ = 0xC0;     // Charset explorer: first code of the shown block
@@ -144,9 +154,20 @@ private:
   uint32_t    callStartMs_ = 0;
   uint32_t    lastCallSec_ = 0;
   std::string dialedName_, dialedNumber_;
+  // A call that actually CONNECTED (reached Active) returns to the home screen
+  // when it ends, instead of dropping the user back on the phonebook/recents menu
+  // they dialled from. A never-answered outgoing/incoming call leaves the screen
+  // as it was.
+  bool        callWasActive_ = false;
+  // Auto-retry a PBAP pull while the Phonebook/RecentCalls screen is open but the
+  // list is still empty (the first pull can no-op if the active device isn't yet
+  // resolved, or the OPEN can fail) — so an intermittent recall recovers on its own.
+  uint32_t    screenPullMs_ = 0;
+  int         screenPullTries_ = 0;
+  static constexpr uint32_t kScreenPullRetryMs = 4000;
+  static constexpr int      kScreenPullMaxTries = 5;
   // Auto-return to Now-Playing after inactivity in a menu / transient screen.
   uint32_t lastInputMs_ = 0;
-  bool     wasDiag_ = false;   // edge-detect leaving diag screens (KWP idle stop)
   static constexpr uint32_t kHomeTimeoutMs = 20000;
   // Boot splash.
   uint32_t bootMs_ = 0;
@@ -167,6 +188,9 @@ private:
   uint32_t lastNav_ = 0;
   static constexpr uint32_t kNavCooldownMs = 150;
   bool navReady() { if (now_ - lastNav_ < kNavCooldownMs) return false; lastNav_ = now_; return true; }
+  // Remember the last group picked in READ GROUP / GRAPH VALUE so reopening the
+  // screen returns to it instead of resetting to group 2.
+  void saveDiagGroup() { storage_.putInt("diag.group", readGroup_); storage_.commit(); }
   static constexpr int kWin = 8;
   static constexpr uint8_t kGaugeTop = 24;  // lower HALFSCREEN band origin (matches Esp32Display kHalfTop)
   static constexpr int kGraphW = 64;
