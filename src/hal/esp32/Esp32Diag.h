@@ -75,7 +75,8 @@ public:
     if (tuning_) {
       int i = tuneIdx_ < kNumCands ? tuneIdx_ : kNumCands - 1;
       const Cand& c = kCands[i];
-      std::snprintf(b, sizeof(b), "TUNE %d/%d i%d b%d f%d", i + 1, kNumCands, c.init, c.byte, c.frame);
+      std::snprintf(b, sizeof(b), "TUNE %d/%d %lu/%lurd i%d b%d", i + 1, kNumCands,
+                    (unsigned long)(reads_ - tuneStartReads_), (unsigned long)kTuneTargetReads, c.init, c.byte);
     } else if (tuneBestIdx_ >= 0) {
       const Cand& c = kCands[tuneBestIdx_];
       std::snprintf(b, sizeof(b), "BEST i%d b%d f%d %drd", c.init, c.byte, c.frame, tuneBestScore_);
@@ -137,8 +138,9 @@ private:
   // reads) AND connects-then-drops-fast (a few reads then nothing). A healthy
   // K-line does ~3-4 reads/s (~50+ per 15s window); < kMinReadsPerWindow means
   // it's effectively broken. Gauges already show NO DATA when this fires, so the
-  // ~3min sweep costs nothing and the winner persists for future drives. Once per
-  // boot; window resets whenever a gauge (re)opens (see setActive).
+  // sweep costs nothing (and it early-exits once a timing works — see runTuneStep)
+  // and the winner persists for future drives. Once per boot; window resets
+  // whenever a gauge (re)opens (see setActive).
   void checkThroughputAutoTune() {
     if (autoTunedThisBoot_ || tuning_ || !active_) return;
     uint32_t now = millis();
@@ -149,8 +151,13 @@ private:
   }
 
   // One iteration of the timing sweep: apply the current candidate, connect to the
-  // engine and read grp1 for a fixed window, then score it by reads accumulated
-  // and advance. The most reads = the most reliable timing on this K-line.
+  // engine and read grp1, counting reads. A candidate ends when it either PASSES
+  // (reaches kTuneTargetReads — a timing that sustains reads on this K-line) or is
+  // ruled out (dead-fast: almost nothing after kTuneDeadMs; or capped at
+  // kTuneCapMs). We EARLY-EXIT the whole sweep on the first pass rather than
+  // grinding all 9 — for an abysmal connection, any timing that holds 50 reads is
+  // the win, and the candidate list is ordered best-guess first. Bounds the sweep
+  // to ~15-30s typically instead of a flat 3 minutes.
   void runTuneStep() {
     uint32_t now = millis();
     if (tuneApply_) {
@@ -163,8 +170,14 @@ private:
       SENSOR s[16]; int n = kwp_.readBlock(0x01, 1, 16, s); if (n > 0) ++reads_;
     } else { vTaskDelay(pdMS_TO_TICKS(kwp_.magicOk ? 400 : 2500)); }
     connected_ = kwp_.isConnected();
-    if (now - tuneWindowStart_ >= kTuneWindowMs) {  // window done -> score + next
-      tuneScore_[tuneIdx_] = static_cast<int>(reads_ - tuneStartReads_);
+    uint32_t windowReads = reads_ - tuneStartReads_;
+    uint32_t elapsed = now - tuneWindowStart_;
+    bool passed   = windowReads >= kTuneTargetReads;                             // sustains reads -> good
+    bool deadFast = elapsed >= kTuneDeadMs && windowReads < kTuneDeadReads;      // basically nothing -> skip
+    bool capped   = elapsed >= kTuneCapMs;                                       // marginal -> give up
+    if (passed || deadFast || capped) {
+      tuneScore_[tuneIdx_] = static_cast<int>(windowReads);
+      if (passed) { finishTune(); return; }         // early-exit: first working timing wins
       if (++tuneIdx_ >= kNumCands) finishTune();
       else tuneApply_ = true;
     }
@@ -274,7 +287,10 @@ private:
     {210,  7,  0}, {200, 25,  0}, {200, 50, 85}, {200,  4, 40},
   };
   static constexpr int kNumCands = sizeof(kCands) / sizeof(kCands[0]);
-  static constexpr uint32_t kTuneWindowMs = 20000;   // measurement window per candidate
+  static constexpr uint32_t kTuneTargetReads = 50;   // reads that mark a candidate as working -> pass
+  static constexpr uint32_t kTuneCapMs   = 15000;    // max time on a marginal candidate before giving up
+  static constexpr uint32_t kTuneDeadMs  = 6000;     // abandon a candidate this fast if it's...
+  static constexpr uint32_t kTuneDeadReads = 3;      // ...read almost nothing (clearly wrong timing)
   volatile bool tuning_ = false, tuneApply_ = false, tuneDone_ = false, tuneResultReady_ = false;
   int tuneIdx_ = 0, tuneBestIdx_ = -1, tuneBestScore_ = -1;
   int tuneScore_[kNumCands] = {0};
