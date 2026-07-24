@@ -171,8 +171,10 @@ private:
       if (kwp_.isConnected()) kwp_.disconnect();     // fresh connect at this candidate's timing
       candStart_ = now; candConnected_ = false; searchApply_ = false;
     }
+    bool wasConn = kwp_.isConnected();
     if (ensureConnected(0x01)) {                      // engine ECU
-      if (!candConnected_) { candConnected_ = true; measStart_ = now; measReads_ = reads_; }
+      if (!candConnected_) { candConnected_ = true; measStart_ = now; measReads_ = reads_; measDrops_ = 0; }
+      else if (!wasConn) { ++measDrops_; }            // reconnected mid-window = a drop (stability cost)
       SENSOR s[16]; int n = kwp_.readBlock(0x01, 1, 16, s); if (n > 0) ++reads_;
     } else { backoffCold(); }
     connected_ = kwp_.isConnected();
@@ -182,7 +184,12 @@ private:
     bool measured = candConnected_ && (now - measStart_ >= win);
     bool gaveUp   = !candConnected_ && (now - candStart_ >= kConnCapMs);
     if (measured || gaveUp) {
-      int score = candConnected_ ? static_cast<int>(reads_ - measReads_) : 0;
+      // Stability-weighted score: reward reads, but PENALISE drops so the sweep
+      // prefers the timing that stays connected, not just the highest one-window
+      // rate. "Best connection" = high throughput AND few dropouts.
+      int reads = candConnected_ ? static_cast<int>(reads_ - measReads_) : 0;
+      int score = reads - kDropPenalty * static_cast<int>(measDrops_);
+      if (score < 0) score = 0;
       search_.report(score);
       searchDirty_ = true;                            // persist progress after each candidate
       if (search_.done()) {
@@ -291,11 +298,12 @@ private:
   volatile bool searchApply_ = false;    // (re)apply timing + reconnect for the current candidate
   volatile bool searchDirty_ = false;    // new progress to persist (App polls takeSearchSnapshot)
   volatile bool tuneResultReady_ = false; // sweep finished; winner ready for the App to persist
-  uint32_t candStart_ = 0, measStart_ = 0, measReads_ = 0;
+  uint32_t candStart_ = 0, measStart_ = 0, measReads_ = 0, measDrops_ = 0;
   bool candConnected_ = false;
   static constexpr uint32_t kMeasWindowMs     = 15000;  // coarse-stage measurement window
   static constexpr uint32_t kMeasWindowFineMs = 25000;  // fine stages measure longer (less noisy scores)
   static constexpr uint32_t kConnCapMs        = 8000;   // score 0 if a candidate can't connect within this
+  static constexpr int      kDropPenalty      = 5;      // reads deducted per mid-window reconnect (stability)
 };
 
 } // namespace mmi

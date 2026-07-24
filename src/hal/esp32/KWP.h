@@ -81,6 +81,14 @@ class KWP {
     volatile int blockDelayMs_ = 0;   // W3 pause before sending a block (inter-frame)
     uint8_t errorTimeout = 0;
     uint8_t errorData = 0;
+    // Session resilience: while softMode_ is set (inside readBlock), a failed
+    // request SEND does NOT tear the session down — the block counter only
+    // advances on a fully successful exchange, so re-sending the same request is
+    // protocol-safe. A corrupted RESPONSE still can't be re-requested (the ECU is
+    // mid-exchange), so those stay hard failures. kMaxSendRetries bounds the retry.
+    bool softMode_ = false;
+    static const int kMaxSendRetries = 2;
+    void drainRx();
 
     //Serial *obd;
 

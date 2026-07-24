@@ -200,15 +200,26 @@ void KWP::disconnect() {
 }
 
 int KWP::readBlock(uint8_t addr, int group, int maxSensorsPerBlock, SENSOR resGroupSensor[]) {
-  SENSOR sensor;
   Serial.print(F("------readBlock "));
   Serial.println(group);
   char s[64];
-  sprintf(s, "\x04%c\x29%c\x03", blockCounter, group);
-  if (!KWPSendBlock(s, 5)) return false;
+  // Resilient request send: a request corrupted by K-line noise (bad TX
+  // complement) leaves the block counter untouched, so re-sending the SAME
+  // request is protocol-safe. Retry a couple of times before giving up, instead
+  // of tearing the session down and paying a full 5-baud reconnect for a glitch.
+  softMode_ = true;
+  bool sent = false;
+  for (int attempt = 0; attempt <= kMaxSendRetries; ++attempt) {
+    sprintf(s, "\x04%c\x29%c\x03", blockCounter, group);
+    if (KWPSendBlock(s, 5)) { sent = true; break; }
+    drainRx(); delay(20);                       // flush the noise, then re-issue
+  }
+  softMode_ = false;
+  if (!sent) { disconnect(); errorData++; return 0; }  // request never got through -> reconnect
   int size = 0;
-  KWPReceiveBlock(s, 64, size);
-  if (s[2] != '\xe7') {
+  // A corrupted RESPONSE can't be safely re-requested (the ECU is mid-exchange),
+  // so a receive failure remains a hard drop.
+  if (!KWPReceiveBlock(s, 64, size) || s[2] != '\xe7') {
     Serial.println(F("ERROR: invalid answer"));
     disconnect();
     errorData++;
@@ -458,12 +469,16 @@ void KWP::obdWrite(uint8_t data) {
   if (Serial2.available()) Serial2.read();   // drop our own echoed byte
 }
 
+void KWP::drainRx() {
+  while (Serial2.available()) Serial2.read();
+}
+
 uint8_t KWP::obdRead() {
   unsigned long timeout = millis() + 1000;
   while (!Serial2.available()){
     if (millis() >= timeout) {
       Serial.println(F("ERROR: obdRead timeout"));
-      disconnect();
+      if (!softMode_) disconnect();   // in soft mode the caller decides (safe retry)
       errorTimeout++;
       return 0;
     }
@@ -538,8 +553,8 @@ bool KWP::KWPSendBlock(char *s, int size) {
       uint8_t complement = obdRead();
       if (complement != (data ^ 0xFF)){
         Serial.println(F("ERROR: invalid complement"));
-        disconnect();
-        errorData++;
+        if (!softMode_) disconnect();   // soft mode: request not fully sent, block counter
+        errorData++;                    // not advanced -> caller can safely re-send
         return false;
       }
     }
