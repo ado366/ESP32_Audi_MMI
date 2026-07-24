@@ -164,22 +164,82 @@ String KWP::fastInitProbe(uint8_t addr) {
   return out;
 }
 
-String KWP::kwp2000Frame(const uint8_t* body, int n, const char* label) {
-  delay(60);                                   // ISO 14230 P3: gap before the next request
+// Send one raw KWP2000 (ISO 14230) frame (checksum appended) and capture the
+// reply bytes. gap = insert the P3 inter-request pause first. Returns byte count.
+int KWP::kwp2000Send(const uint8_t* body, int n, uint8_t* rx, int maxRx, bool gap) {
+  if (gap) delay(60);                          // ISO 14230 P3: gap before the next request
   drainRx();
   uint8_t cs = 0; for (int i = 0; i < n; ++i) cs += body[i];
   for (int i = 0; i < n; ++i) obdWrite(body[i]);   // obdWrite drops each byte's echo
   obdWrite(cs);
-  uint8_t rx[24]; int m = 0;
+  int m = 0;
   unsigned long deadline = millis() + 300;
-  while ((long)(millis() - deadline) < 0 && m < 24) {
+  while ((long)(millis() - deadline) < 0 && m < maxRx) {
     if (Serial2.available()) { rx[m++] = (uint8_t)Serial2.read(); deadline = millis() + 50; }
   }
+  return m;
+}
+
+String KWP::kwp2000Frame(const uint8_t* body, int n, const char* label) {
+  uint8_t rx[24];
+  int m = kwp2000Send(body, n, rx, 24, true);
   String out = label;
   if (m == 0) out += " (no reply)";
   for (int i = 0; i < m; ++i) { char b[6]; snprintf(b, sizeof(b), " %02X", rx[i]); out += b; }
   out += "\n";
   return out;
+}
+
+// Establish a KWP2000 session over ISO 14230 fast-init. On success the session is
+// live and readBlock() will use the 0x21 service. Returns false (leaving the line
+// idle) if the ECU doesn't answer fast-init or the validation read fails, so the
+// caller can fall back to KWP1281.
+bool KWP::connectKwp2000(uint8_t addr) {
+  char db[64]; snprintf(db, sizeof(db), "kwp2000 fast-init a=%02X\n", addr); dbg = db;
+  connected = false; kwp2000_ = false; magicOk = false;
+  // fast-init wake pulse (bit-banged: idle-high, 25ms low, 25ms high)
+  Serial2.end();
+  pinMode(_OBD_TX_PIN, OUTPUT);
+  digitalWrite(_OBD_TX_PIN, HIGH); delay(300);
+  digitalWrite(_OBD_TX_PIN, LOW);  delay(25);
+  digitalWrite(_OBD_TX_PIN, HIGH); delay(25);
+  Serial2.begin(10400, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
+  drainRx();
+  uint8_t rx[32];
+  uint8_t sc[4] = { 0xC1, addr, 0xF1, 0x81 };          // StartCommunication
+  int m = kwp2000Send(sc, 4, rx, 32, false);
+  if (m < 6 || rx[0] != 0x83 || rx[3] != 0xC1) { dbg += "no fast-init reply\n"; Serial2.end(); return false; }
+  dbg += "startComm OK\n";
+  uint8_t sds[5] = { 0x82, addr, 0xF1, 0x10, 0x89 };   // StartDiagnosticSession (best-effort)
+  kwp2000Send(sds, 5, rx, 32, true);
+  // Validate the whole path with a real group read; only then declare success.
+  kwp2000_ = true; connected = true; currAddr = addr;
+  SENSOR probe[16];
+  if (readBlock2000(addr, 1, 16, probe) <= 0) { dbg += "validation read failed\n"; disconnect(); return false; }
+  magicOk = true;
+  dbg += "KWP2000 CONNECTED\n";
+  return true;
+}
+
+// KWP2000 measuring-block read (service 0x21 ReadDataByLocalIdentifier). The reply
+// is <fmt> F1 <src> 61 <group> [k a b][k a b]... <cs> — the same measuring-block
+// triples as KWP1281, so parseGroup() handles the scaling/labels.
+int KWP::readBlock2000(uint8_t addr, int group, int maxSensors, SENSOR res[]) {
+  uint8_t req[5] = { 0x82, addr, 0xF1, 0x21, (uint8_t)group };
+  uint8_t rx[80];
+  int m = 0;
+  for (int attempt = 0; attempt <= kMaxSendRetries; ++attempt) {   // resend on a noise glitch
+    m = kwp2000Send(req, 5, rx, 80, true);
+    if (m >= 6) break;
+    drainRx();
+  }
+  int p = -1;
+  for (int i = 3; i < m - 1; ++i) { if (rx[i] == 0x61) { p = i; break; } }  // positive response SID
+  if (p < 0) { disconnect(); errorData++; return 0; }              // 0x7F negative / no reply
+  int di = p + 1;
+  if (di < m && rx[di] == (uint8_t)group) di++;                    // skip the echoed record id
+  int nbytes = (m - 1) - di; if (nbytes < 0) nbytes = 0;           // exclude the trailing checksum
+  return parseGroup(addr, group, &rx[di], nbytes / 3, maxSensors, res);
 }
 
 // KWP1281: request stored fault codes (title 0x07). The ECU replies with one or
@@ -221,10 +281,12 @@ bool KWP::clearFaultCodes() {
 
 void KWP::disconnect() {
   connected = false;
-  Serial2.end(); 
+  kwp2000_ = false;
+  Serial2.end();
 }
 
 int KWP::readBlock(uint8_t addr, int group, int maxSensorsPerBlock, SENSOR resGroupSensor[]) {
+  if (kwp2000_) return readBlock2000(addr, group, maxSensorsPerBlock, resGroupSensor);
   Serial.print(F("------readBlock "));
   Serial.println(group);
   char s[64];
@@ -257,27 +319,35 @@ int KWP::readBlock(uint8_t addr, int group, int maxSensorsPerBlock, SENSOR resGr
     errorData++;
     return 0;
   }
-  String blockDescs= getBlockDesc(addr, group);
-  int len=blockDescs.length();
-  char buf[len+1];
-  blockDescs.toCharArray(buf, len+1);
+  return parseGroup(addr, group, (const uint8_t*)&s[3], count, maxSensorsPerBlock, resGroupSensor);
+}
+
+// Turn a measuring block's raw (formula,a,b) triples into labelled SENSORs. Shared
+// by the KWP1281 block read and the KWP2000 (service 0x21) read — both encode
+// measuring blocks identically, so the scaling table (getSensorData) and label
+// table (getBlockDesc) apply to both.
+int KWP::parseGroup(uint8_t addr, int group, const uint8_t* triples, int count, int maxSensors, SENSOR res[]) {
+  if (count > maxSensors) count = maxSensors;
+  if (count < 0) count = 0;
+  String blockDescs = getBlockDesc(addr, group);
+  int len = blockDescs.length();
+  char buf[len + 1];
+  blockDescs.toCharArray(buf, len + 1);
   char* command = strtok(buf, ",");
-  Serial.print(F("count="));
-  Serial.println(count);
-  int j=0;
-  for (int idx=0; idx < count; idx++){
-    byte k=s[3 + idx*3];
-    byte a=s[3 + idx*3+1];
-    byte b=s[3 + idx*3+2];
-    String desc=String(command);
+  int j = 0;
+  for (int idx = 0; idx < count; idx++) {
+    byte k = triples[idx * 3];
+    byte a = triples[idx * 3 + 1];
+    byte b = triples[idx * 3 + 2];
+    String desc = command ? String(command) : String("");
     SENSOR sensor = getSensorData(k, a, b);
-    if(desc != "" && sensor.value != ""){
-      resGroupSensor[j].type = sensor.type;
-      resGroupSensor[j].a = sensor.a;
-      resGroupSensor[j].b = sensor.b;
-      resGroupSensor[j].desc = desc;
-      resGroupSensor[j].value = sensor.value;
-      resGroupSensor[j].units = sensor.units;
+    if (desc != "" && sensor.value != "") {
+      res[j].type = sensor.type;
+      res[j].a = sensor.a;
+      res[j].b = sensor.b;
+      res[j].desc = desc;
+      res[j].value = sensor.value;
+      res[j].units = sensor.units;
       j++;
     }
     command = strtok(0, ",");

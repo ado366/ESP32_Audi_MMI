@@ -60,6 +60,7 @@ public:
     active_ = a;
   }
   uint32_t coldFails() const { return coldFails_; }  // consecutive un-synced cold-connect failures
+  bool usingFastInit() const { return kwp_.isKwp2000(); }  // engine session is KWP2000 (vs KWP1281)
 
   // ---- KWP timing deep sweep (coarse-to-fine, resumable across drives) ----
   // Drives KwpTuneSearch: coordinate-descends init/byte/frame, coarse then fine,
@@ -106,6 +107,15 @@ private:
   bool ensureConnected(uint8_t addr) {
     if (kwp_.isConnected() && kwp_.getCurrAddr() == addr) { connected_ = true; return true; }
     if (kwp_.isConnected()) kwp_.disconnect();
+    // Engine ECU: TRY ISO 14230 fast-init / KWP2000 first (far cheaper connect,
+    // no 5-baud timing fragility). If the ECU doesn't answer fast-init after a few
+    // tries, lock to KWP1281 for the rest of this boot and fall through to the
+    // 5-baud path (+ the auto-calibration). Cluster (0x17) is KWP1281 only.
+    if (addr == kEngine && proto_[addr] != kProto1281) {
+      if (kwp_.connectKwp2000(addr)) { proto_[addr] = kProto2000; fastFails_[addr] = 0; coldFails_ = 0; connected_ = true; return true; }
+      if (++fastFails_[addr] >= kFastInitTries) proto_[addr] = kProto1281;   // give up on fast-init this boot
+      else { connected_ = false; return false; }   // let the caller's backoff space out fast-init retries
+    }
     // ECUs differ in K-line baud: this car's cluster (17) is 10400 but the
     // EDC15 engine ECU (01) answers at 9600 — at the wrong rate the 0x55 sync
     // smears into 0x95. ONE init per call, alternating baud on failure: an
@@ -284,6 +294,13 @@ private:
   static constexpr uint32_t kMinReadsPerWindow = 8;         // < this in a window = broken -> auto-tune
   bool baud9600_[256] = {false};   // per-address: use 9600 (else 10400)
   bool baudConfirmed_[256] = {false};  // per-address: a baud has synced the magic -> stop probing
+  // Per-address protocol selection: try fast-init/KWP2000 for the engine first,
+  // fall back to KWP1281 if it doesn't answer after a few tries (this boot).
+  static constexpr uint8_t kEngine = 0x01;
+  enum { kProtoUnknown = 0, kProto1281 = 1, kProto2000 = 2 };
+  static constexpr int kFastInitTries = 3;
+  uint8_t proto_[256] = {kProtoUnknown};
+  uint8_t fastFails_[256] = {0};
   volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;
   volatile bool fastInitReq_ = false;
   volatile uint8_t fastInitEcu_ = 0x01;

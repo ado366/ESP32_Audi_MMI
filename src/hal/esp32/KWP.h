@@ -34,6 +34,13 @@ class KWP {
     KWP(uint8_t receivePin, uint8_t transmitPin);
     ~KWP();
     bool connect(uint8_t addr, int baudrate);
+    // ISO 14230 fast-init + KWP2000 session for the engine ECU. Does the 25/25ms
+    // wake, StartCommunication, StartDiagnosticSession and a validation read; on
+    // success the session runs KWP2000 (readBlock dispatches to the 0x21 path) and
+    // isConnected()/getCurrAddr() report it. Returns false if the ECU doesn't
+    // answer fast-init (caller falls back to KWP1281). Always 10400 8N1.
+    bool connectKwp2000(uint8_t addr);
+    bool isKwp2000() const { return kwp2000_; }
     void disconnect();
     int readBlock(uint8_t addr, int group, int maxSensorsPerGroup, SENSOR resGroupSensor[]);
     SENSOR getSensorData(byte k, byte a, byte b);
@@ -93,6 +100,15 @@ class KWP {
     bool softMode_ = false;
     static const int kMaxSendRetries = 2;
     void drainRx();
+
+    // KWP2000 (ISO 14230) session state + helpers. When kwp2000_ is set the public
+    // readBlock() dispatches to the service-0x21 path instead of the KWP1281 block
+    // protocol. Measuring-block DATA is the same (formula,a,b) triples, so parsing
+    // reuses getSensorData/getBlockDesc via parseGroup().
+    bool kwp2000_ = false;
+    int  kwp2000Send(const uint8_t* body, int n, uint8_t* rx, int maxRx, bool gap);
+    int  readBlock2000(uint8_t addr, int group, int maxSensorsPerGroup, SENSOR res[]);
+    int  parseGroup(uint8_t addr, int group, const uint8_t* triples, int count, int maxSensors, SENSOR res[]);
 
     //Serial *obd;
 
