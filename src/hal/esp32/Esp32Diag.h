@@ -60,7 +60,10 @@ public:
     active_ = a;
   }
   uint32_t coldFails() const { return coldFails_; }  // consecutive un-synced cold-connect failures
-  bool usingFastInit() const { return kwp_.isKwp2000(); }  // engine session is KWP2000 (vs KWP1281)
+  bool usingFastInit() const { return kwp_.isKwp2000() || kwp_.isObd2(); }
+  const char* protoName() const {                          // live engine protocol, for telemetry
+    return kwp_.isObd2() ? "obd2" : kwp_.isKwp2000() ? "kwp2000" : "kwp1281";
+  }
 
   // ---- KWP timing deep sweep (coarse-to-fine, resumable across drives) ----
   // Drives KwpTuneSearch: coordinate-descends init/byte/frame, coarse then fine,
@@ -112,7 +115,12 @@ private:
     // tries, lock to KWP1281 for the rest of this boot and fall through to the
     // 5-baud path (+ the auto-calibration). Cluster (0x17) is KWP1281 only.
     if (addr == kEngine && proto_[addr] != kProto1281) {
-      if (kwp_.connectKwp2000(addr)) { proto_[addr] = kProto2000; fastFails_[addr] = 0; coldFails_ = 0; connected_ = true; return true; }
+      // 1) VAG measuring blocks over KWP2000; 2) generic OBD-II PIDs at 0x33 as a
+      // net when fast-init works but VAG blocks don't; else count a fast-init miss.
+      bool ok = false;
+      if (proto_[addr] != kProtoObd2 && kwp_.connectKwp2000(addr)) { proto_[addr] = kProto2000; ok = true; }
+      else if (kwp_.connectObd2())                                 { proto_[addr] = kProtoObd2; ok = true; }
+      if (ok) { fastFails_[addr] = 0; coldFails_ = 0; connected_ = true; return true; }
       if (++fastFails_[addr] >= kFastInitTries) proto_[addr] = kProto1281;   // give up on fast-init this boot
       else { connected_ = false; return false; }   // let the caller's backoff space out fast-init retries
     }
@@ -297,7 +305,7 @@ private:
   // Per-address protocol selection: try fast-init/KWP2000 for the engine first,
   // fall back to KWP1281 if it doesn't answer after a few tries (this boot).
   static constexpr uint8_t kEngine = 0x01;
-  enum { kProtoUnknown = 0, kProto1281 = 1, kProto2000 = 2 };
+  enum { kProtoUnknown = 0, kProto1281 = 1, kProto2000 = 2, kProtoObd2 = 3 };
   static constexpr int kFastInitTries = 3;
   uint8_t proto_[256] = {kProtoUnknown};
   uint8_t fastFails_[256] = {0};

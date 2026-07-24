@@ -196,15 +196,8 @@ String KWP::kwp2000Frame(const uint8_t* body, int n, const char* label) {
 // caller can fall back to KWP1281.
 bool KWP::connectKwp2000(uint8_t addr) {
   char db[64]; snprintf(db, sizeof(db), "kwp2000 fast-init a=%02X\n", addr); dbg = db;
-  connected = false; kwp2000_ = false; magicOk = false;
-  // fast-init wake pulse (bit-banged: idle-high, 25ms low, 25ms high)
-  Serial2.end();
-  pinMode(_OBD_TX_PIN, OUTPUT);
-  digitalWrite(_OBD_TX_PIN, HIGH); delay(300);
-  digitalWrite(_OBD_TX_PIN, LOW);  delay(25);
-  digitalWrite(_OBD_TX_PIN, HIGH); delay(25);
-  Serial2.begin(10400, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
-  drainRx();
+  connected = false; kwp2000_ = false; obd2_ = false; magicOk = false;
+  fastInitWake();
   uint8_t rx[32];
   uint8_t sc[4] = { 0xC1, addr, 0xF1, 0x81 };          // StartCommunication
   int m = kwp2000Send(sc, 4, rx, 32, false);
@@ -240,6 +233,79 @@ int KWP::readBlock2000(uint8_t addr, int group, int maxSensors, SENSOR res[]) {
   if (di < m && rx[di] == (uint8_t)group) di++;                    // skip the echoed record id
   int nbytes = (m - 1) - di; if (nbytes < 0) nbytes = 0;           // exclude the trailing checksum
   return parseGroup(addr, group, &rx[di], nbytes / 3, maxSensors, res);
+}
+
+// Shared ISO 14230 fast-init wake: idle-high, 25ms low, 25ms high, then open the
+// UART at 10400 8N1 ready for StartCommunication.
+void KWP::fastInitWake() {
+  Serial2.end();
+  pinMode(_OBD_TX_PIN, OUTPUT);
+  digitalWrite(_OBD_TX_PIN, HIGH); delay(300);
+  digitalWrite(_OBD_TX_PIN, LOW);  delay(25);
+  digitalWrite(_OBD_TX_PIN, HIGH); delay(25);
+  Serial2.begin(10400, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
+  drainRx();
+}
+
+// Generic OBD-II session (ISO 14230-4) over fast-init at the functional address
+// 0x33. Validated with a live RPM read. The safety net when the ECU speaks
+// KWP2000 but not the VAG measuring blocks.
+bool KWP::connectObd2() {
+  dbg = "obd2 fast-init a=33\n";
+  connected = false; kwp2000_ = false; obd2_ = false; magicOk = false;
+  fastInitWake();
+  uint8_t rx[32];
+  uint8_t sc[4] = { 0xC1, 0x33, 0xF1, 0x81 };          // StartCommunication (functional)
+  int m = kwp2000Send(sc, 4, rx, 32, false);
+  if (m < 6 || rx[0] != 0x83 || rx[3] != 0xC1) { dbg += "no fast-init reply\n"; Serial2.end(); return false; }
+  dbg += "obd2 startComm OK\n";
+  obd2_ = true; connected = true; currAddr = 0x33;
+  SENSOR probe;                                          // validate with an RPM PID read
+  if (!obd2ReadPid(0x0C, probe)) { dbg += "obd2 PID read failed\n"; disconnect(); return false; }
+  magicOk = true; dbg += "OBD2 CONNECTED\n";
+  return true;
+}
+
+// Read one OBD-II mode-01 PID and scale it (standard SAE J1979 formulas).
+bool KWP::obd2ReadPid(uint8_t pid, SENSOR& out) {
+  uint8_t req[5] = { 0x82, 0x33, 0xF1, 0x01, pid };
+  uint8_t rx[32]; int m = 0;
+  for (int a = 0; a <= kMaxSendRetries; ++a) { m = kwp2000Send(req, 5, rx, 32, true); if (m >= 6) break; drainRx(); }
+  int p = -1;
+  for (int i = 3; i < m - 1; ++i) { if (rx[i] == 0x41 && i + 1 < m && rx[i + 1] == pid) { p = i; break; } }
+  if (p < 0) return false;                               // 0x41 = positive mode-01 response
+  int A = (p + 2 < m) ? rx[p + 2] : 0;
+  int B = (p + 3 < m) ? rx[p + 3] : 0;
+  float v = 0; String u, d;
+  switch (pid) {
+    case 0x0C: v = ((A * 256) + B) / 4.0f;  u = F("rpm");  d = F("Engine Speed"); break;
+    case 0x05: v = A - 40;                  u = F("C");    d = F("Coolant");      break;
+    case 0x0D: v = A;                       u = F("km/h"); d = F("Speed");        break;
+    case 0x10: v = ((A * 256) + B) / 100.0f;u = F("g/s");  d = F("MAF");          break;
+    case 0x0B: v = A;                       u = F("kPa");  d = F("MAP");          break;
+    case 0x0F: v = A - 40;                  u = F("C");    d = F("Intake Air");   break;
+    case 0x11: v = A * 100.0f / 255;        u = F("%");    d = F("Throttle");     break;
+    case 0x04: v = A * 100.0f / 255;        u = F("%");    d = F("Load");         break;
+    default: return false;
+  }
+  char buf[16]; dtostrf(v, 4, 2, buf);
+  out.type = 0; out.a = A; out.b = B; out.desc = d; out.value = String(buf); out.units = u;
+  return true;
+}
+
+// OBD-II "group" read: map a group number to a set of standard PIDs so the same
+// group-based UI works. group 1 = overview, group 2 = boost/air.
+int KWP::readBlockObd2(int group, int maxSensors, SENSOR res[]) {
+  static const uint8_t g1[4] = { 0x0C, 0x05, 0x0D, 0x10 };   // RPM, Coolant, Speed, MAF
+  static const uint8_t g2[4] = { 0x0B, 0x0F, 0x11, 0x04 };   // MAP, IAT, Throttle, Load
+  const uint8_t* pids = (group == 2) ? g2 : g1;
+  int j = 0;
+  for (int i = 0; i < 4 && j < maxSensors; ++i) {
+    SENSOR s;
+    if (obd2ReadPid(pids[i], s)) res[j++] = s;
+  }
+  if (j == 0) { disconnect(); errorData++; }               // nothing answered -> session gone
+  return j;
 }
 
 // KWP1281: request stored fault codes (title 0x07). The ECU replies with one or
@@ -282,10 +348,12 @@ bool KWP::clearFaultCodes() {
 void KWP::disconnect() {
   connected = false;
   kwp2000_ = false;
+  obd2_ = false;
   Serial2.end();
 }
 
 int KWP::readBlock(uint8_t addr, int group, int maxSensorsPerBlock, SENSOR resGroupSensor[]) {
+  if (obd2_)    return readBlockObd2(group, maxSensorsPerBlock, resGroupSensor);
   if (kwp2000_) return readBlock2000(addr, group, maxSensorsPerBlock, resGroupSensor);
   Serial.print(F("------readBlock "));
   Serial.println(group);

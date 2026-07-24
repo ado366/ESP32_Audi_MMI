@@ -41,6 +41,12 @@ class KWP {
     // answer fast-init (caller falls back to KWP1281). Always 10400 8N1.
     bool connectKwp2000(uint8_t addr);
     bool isKwp2000() const { return kwp2000_; }
+    // Generic OBD-II (ISO 14230-4 mode 01) over fast-init at the functional
+    // address 0x33 — the safety net for an EDC15 that does KWP2000 but doesn't
+    // serve the VAG measuring blocks. readBlock() then returns standard PIDs
+    // (RPM/coolant/speed/MAF in group 1, MAP/IAT/throttle/load in group 2).
+    bool connectObd2();
+    bool isObd2() const { return obd2_; }
     void disconnect();
     int readBlock(uint8_t addr, int group, int maxSensorsPerGroup, SENSOR resGroupSensor[]);
     SENSOR getSensorData(byte k, byte a, byte b);
@@ -106,9 +112,13 @@ class KWP {
     // protocol. Measuring-block DATA is the same (formula,a,b) triples, so parsing
     // reuses getSensorData/getBlockDesc via parseGroup().
     bool kwp2000_ = false;
+    bool obd2_ = false;
+    void fastInitWake();                          // shared 25/25ms ISO 14230 wake pulse
     int  kwp2000Send(const uint8_t* body, int n, uint8_t* rx, int maxRx, bool gap);
     int  readBlock2000(uint8_t addr, int group, int maxSensorsPerGroup, SENSOR res[]);
     int  parseGroup(uint8_t addr, int group, const uint8_t* triples, int count, int maxSensors, SENSOR res[]);
+    int  readBlockObd2(int group, int maxSensors, SENSOR res[]);
+    bool obd2ReadPid(uint8_t pid, SENSOR& out);   // one mode-01 PID -> scaled SENSOR
 
     //Serial *obd;
 

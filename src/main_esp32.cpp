@@ -96,7 +96,7 @@ void setup() {
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
       app ? (int)app->context() : -1, tune.c_str(),
       app ? app->actionTrace().c_str() : "",     // recent actions: catch phantom inputs
-      diag.usingFastInit() ? "kwp2000" : "kwp1281");   // which engine protocol is live
+      diag.protoName());   // which engine protocol is live: kwp2000 / obd2 / kwp1281
     return std::string(b);
   });
   ota.setBc127Console([](const std::string& c) { bt.sendCommand(c); },
