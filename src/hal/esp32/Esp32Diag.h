@@ -55,7 +55,11 @@ public:
     kwp_.setTiming(initBitMs, interByteMs, blockDelayMs);
   }
   void stopReading() override { reqEcu_ = 0; reqGroup_ = 0; stopReq_ = true; }
-  void setActive(bool a) override { active_ = a; }   // gauge on screen -> fast reads; else keep-alive
+  void setActive(bool a) override {                  // gauge on screen -> fast reads; else keep-alive
+    if (a && !active_) { coldFails_ = 0; healthWindowStart_ = 0; }  // fresh health count per gauge-open
+    active_ = a;
+  }
+  uint32_t coldFails() const { return coldFails_; }  // consecutive un-synced cold-connect failures
 
   // ---- KWP timing auto-tuner ----
   void startAutoTune() override {
@@ -109,7 +113,39 @@ private:
     //    attempt on the wrong baud (which is why it rarely connected while driving).
     if (kwp_.magicOk) baudConfirmed_[addr] = true;
     else if (!connected_ && !baudConfirmed_[addr]) baud9600_[addr] = !baud9600_[addr];
+    // Cold-connect health: count consecutive failures that never even synced the
+    // magic (the "can't establish" case). A confirmed-baud noise failure (magicOk)
+    // isn't a cold fail. Drives the escalating backoff + the auto-tune trigger.
+    if (connected_) coldFails_ = 0;
+    else if (!kwp_.magicOk) { if (coldFails_ < 60000) coldFails_++; }
     return connected_;
+  }
+
+  // Wait after a failed connect. Baud locked -> quick noise retry. Otherwise the
+  // EDC15 needs quiet time after an aborted handshake, and MORE of it the longer
+  // it's been failing, so escalate 2.5s -> ~6s as cold failures pile up.
+  void backoffCold() {
+    if (kwp_.magicOk) { vTaskDelay(pdMS_TO_TICKS(400)); return; }
+    uint32_t extra = coldFails_ > 4 ? 4 : coldFails_;
+    vTaskDelay(pdMS_TO_TICKS(2500 + extra * 900));
+  }
+
+  // Auto "auto-tune": watch actual read THROUGHPUT while the user is looking at a
+  // gauge and, if it's abysmal, kick off the timing sweep in the background WITHOUT
+  // them having to find the menu item. Throughput (not connect-failure count) is
+  // the right signal because it catches BOTH failure modes: never-connects (~0
+  // reads) AND connects-then-drops-fast (a few reads then nothing). A healthy
+  // K-line does ~3-4 reads/s (~50+ per 15s window); < kMinReadsPerWindow means
+  // it's effectively broken. Gauges already show NO DATA when this fires, so the
+  // ~3min sweep costs nothing and the winner persists for future drives. Once per
+  // boot; window resets whenever a gauge (re)opens (see setActive).
+  void checkThroughputAutoTune() {
+    if (autoTunedThisBoot_ || tuning_ || !active_) return;
+    uint32_t now = millis();
+    if (healthWindowStart_ == 0) { healthWindowStart_ = now; healthStartReads_ = reads_; return; }
+    if (now - healthWindowStart_ < kHealthWindowMs) return;
+    if (reads_ - healthStartReads_ < kMinReadsPerWindow) { autoTunedThisBoot_ = true; startAutoTune(); }
+    healthWindowStart_ = now; healthStartReads_ = reads_;   // start the next window
   }
 
   // One iteration of the timing sweep: apply the current candidate, connect to the
@@ -171,7 +207,7 @@ private:
             }
             faultReq_ = false;
           }
-        } else { vTaskDelay(pdMS_TO_TICKS(kwp_.magicOk ? 400 : 2500)); }   // fast retry if baud confirmed
+        } else { backoffCold(); }                  // escalating retry gap for the deaf EDC15
         continue;
       }
 
@@ -182,7 +218,7 @@ private:
       // A 5-baud init that aborts leaves the EDC15 deaf for ~seconds, so a failed
       // connect normally waits 2.5s. But if the magic already synced (baud right,
       // noise killed a later stage) the init did NOT abort — retry fast.
-      if (!ensureConnected(e)) { vTaskDelay(pdMS_TO_TICKS(kwp_.magicOk ? 400 : 2500)); continue; }
+      if (!ensureConnected(e)) { checkThroughputAutoTune(); backoffCold(); continue; }
 
       SENSOR s[16];
       int n = kwp_.readBlock(e, g, 16, s);
@@ -201,6 +237,7 @@ private:
         xSemaphoreGive(mtx_);
       }
       connected_ = kwp_.isConnected();
+      checkThroughputAutoTune();     // abysmal read rate while a gauge is up -> auto-run the sweep
       // Fast poll while a gauge is displayed; a slow keep-alive otherwise, which
       // still reads often enough to HOLD the KWP session (ECU drops it after ~1-2s
       // of silence) so re-opening a gauge doesn't pay another cold reconnect.
@@ -216,6 +253,11 @@ private:
   volatile uint8_t reqEcu_ = 0, reqGroup_ = 0, curEcu_ = 0, curGroup_ = 0, faultEcu_ = 0;
   volatile bool connected_ = false, haveData_ = false, stopReq_ = false;
   volatile bool active_ = false;   // a gauge is on screen (fast poll vs keep-alive)
+  volatile uint32_t coldFails_ = 0;        // consecutive un-synced cold-connect failures
+  bool autoTunedThisBoot_ = false;         // background sweep auto-fired once already
+  uint32_t healthWindowStart_ = 0, healthStartReads_ = 0;   // read-throughput window
+  static constexpr uint32_t kHealthWindowMs = 15000;        // window to judge throughput
+  static constexpr uint32_t kMinReadsPerWindow = 8;         // < this in a window = broken -> auto-tune
   bool baud9600_[256] = {false};   // per-address: use 9600 (else 10400)
   bool baudConfirmed_[256] = {false};  // per-address: a baud has synced the magic -> stop probing
   volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;

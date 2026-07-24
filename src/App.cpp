@@ -927,7 +927,10 @@ void App::renderDiag() {
     // now-playing marquee up top look like it was scrolling in the speed's place.
     if (!haveSpeed) {
       display_.drawText(0, 40, kFontCentered, "NO SPEED");
-      display_.drawText(0, 56, kFontCompressedCenter, "KWP NOT CONNECTED");
+      // The background timing sweep runs when the connection is abysmal; say so, so
+      // the ~3min NO-DATA stretch reads as "working on it" rather than "frozen".
+      display_.drawText(0, 56, kFontCompressedCenter,
+                        diag_.autoTuning() ? "AUTO-TUNING KWP..." : "KWP NOT CONNECTED");
       return;
     }
     // Whole-number 64-wide bitmap (restored from v2.8.0, car-proven). A 64px width
@@ -1140,7 +1143,10 @@ void App::renderDiag() {
   }
   // No fresh data for this group (just switched, empty block, or read failed) —
   // show NO DATA rather than the previous group's stale values.
-  if (group_.count == 0) { display_.drawText(0, 44, kFontCentered, "NO DATA"); return; }
+  if (group_.count == 0) {
+    display_.drawText(0, 44, kFontCentered, diag_.autoTuning() ? "AUTO-TUNING" : "NO DATA");
+    return;
+  }
   const int kDiagTop = 25, kLineH = 8;   // 7px glyph + 1px gap between every line
   for (int i = 0; i < group_.count && i < 4; ++i) {
     int y = kDiagTop + i * kLineH * 2;

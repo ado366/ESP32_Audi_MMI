@@ -44,6 +44,11 @@ bool KWP::connect(uint8_t addr, int baudrate) {
   blockCounter = 0;
   magicOk = false;                 // cleared until the 0x55 01 8A sync proves the baud
   pinMode(_OBD_TX_PIN, OUTPUT);
+  digitalWrite(_OBD_TX_PIN, HIGH); // hold the K-line idle-high for the ISO 9141 W5
+  delay(300);                      // bus-idle time (>=300ms) so the ECU sees a clean
+                                   // start bit. An aborted handshake leaves an EDC15
+                                   // mis-synced/deaf; a guaranteed idle gap before the
+                                   // 5-baud address is the standard "won't init" fix.
   KWP5BaudInit(addr);
   dbg += "5baud sent, waiting reply...\n";
   Serial2.begin(baudrate, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
