@@ -47,6 +47,23 @@ void App::begin() {
   adaptByte_  = storage_.getInt("kwp.byte",  10);
   adaptFrame_ = storage_.getInt("kwp.frame", 0);
   diag_.setTiming(adaptInit_, adaptByte_, adaptFrame_);
+  // Restore the deep timing sweep across power cycles: an in-flight sweep resumes
+  // where it left off (spanning several drives), and a COMPLETED one is restored
+  // as done so it never auto-triggers again (see KwpTuneSearch / checkThroughput).
+  { int swAct = storage_.getInt("kwp.sw_act", 0), swDun = storage_.getInt("kwp.sw_dun", 0);
+    if (swAct || swDun) {
+      KwpTuneSearch::State sw{};
+      sw.stage    = (int16_t)storage_.getInt("kwp.sw_stg", 0);
+      sw.cand     = (int16_t)storage_.getInt("kwp.sw_cnd", 0);
+      sw.curInit  = (int16_t)storage_.getInt("kwp.sw_ini", adaptInit_);
+      sw.curByte  = (int16_t)storage_.getInt("kwp.sw_byt", adaptByte_);
+      sw.curFrame = (int16_t)storage_.getInt("kwp.sw_frm", adaptFrame_);
+      sw.bestScore = storage_.getInt("kwp.sw_bsc", -1);
+      sw.bestVal  = (int16_t)storage_.getInt("kwp.sw_bvl", 0);
+      sw.incScore = storage_.getInt("kwp.sw_inc", -1);
+      sw.active = (uint8_t)swAct; sw.done = (uint8_t)swDun;
+      diag_.resumeSearch(sw);
+    } }
   readEcu_ = static_cast<uint8_t>(storage_.getInt("diag.ecu", ecu::Engine));  // last SELECT ECU choice
   bt_.onStatusChanged([this]() { dirty_ = true; });
   menu_.onSelect([this](MenuId id) { onMenuSelect(id); });
@@ -420,6 +437,17 @@ void App::tick(uint32_t nowMs) {
     if (diag_.takeAutoTuneResult(ti, tb, tf)) {
       adaptInit_ = ti; adaptByte_ = tb; adaptFrame_ = tf; adaptSave();
       showInfo("AUTO TUNE", { "DONE", diag_.autoTuneStatus() });
+    } }
+  // Persist deep-sweep progress after each candidate so a long calibration
+  // survives power-offs and resumes next drive (see App::begin restore).
+  { KwpTuneSearch::State sw;
+    if (diag_.takeSearchSnapshot(sw)) {
+      storage_.putInt("kwp.sw_stg", sw.stage);   storage_.putInt("kwp.sw_cnd", sw.cand);
+      storage_.putInt("kwp.sw_ini", sw.curInit); storage_.putInt("kwp.sw_byt", sw.curByte);
+      storage_.putInt("kwp.sw_frm", sw.curFrame);storage_.putInt("kwp.sw_bsc", sw.bestScore);
+      storage_.putInt("kwp.sw_bvl", sw.bestVal); storage_.putInt("kwp.sw_inc", sw.incScore);
+      storage_.putInt("kwp.sw_act", sw.active);  storage_.putInt("kwp.sw_dun", sw.done);
+      storage_.commit();
     } }
 
   // Live diagnostics polling. Groups refresh fast; faults are read (async on

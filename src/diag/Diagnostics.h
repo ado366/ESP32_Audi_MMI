@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "KwpTuneSearch.h"
 
 namespace mmi {
 
@@ -87,6 +88,14 @@ public:
   // True exactly once when a run finishes, filling the winning timing (so the
   // caller can apply + persist it). Subsequent calls return false.
   virtual bool takeAutoTuneResult(int& initMs, int& byteMs, int& frameMs) { return false; }
+
+  // ---- resumable deep sweep persistence (see KwpTuneSearch) ----
+  // The deep sweep spans several drives, so its progress is saved to NVS by the
+  // App layer. On boot the App restores it via resumeSearch(); after each
+  // candidate the source offers a fresh snapshot to persist via takeSearchSnapshot
+  // (true when there's new state). Default no-ops (emulator / no persistence).
+  virtual void resumeSearch(const KwpTuneSearch::State&) {}
+  virtual bool takeSearchSnapshot(KwpTuneSearch::State&) { return false; }
 };
 
 } // namespace mmi

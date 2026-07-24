@@ -61,34 +61,43 @@ public:
   }
   uint32_t coldFails() const { return coldFails_; }  // consecutive un-synced cold-connect failures
 
-  // ---- KWP timing auto-tuner ----
+  // ---- KWP timing deep sweep (coarse-to-fine, resumable across drives) ----
+  // Drives KwpTuneSearch: coordinate-descends init/byte/frame, coarse then fine,
+  // measuring each candidate on the live K-line. Once started it persists after
+  // every candidate (via takeSearchSnapshot) and resumes across reboots, until the
+  // grid completes and the winner is applied. Engine must be reachable.
   void startAutoTune() override {
-    if (tuning_) return;
-    tuneIdx_ = 0; tuneApply_ = true; tuneDone_ = false; tuneResultReady_ = false;
-    tuneBestIdx_ = -1; tuneBestScore_ = -1;
-    for (int i = 0; i < kNumCands; ++i) tuneScore_[i] = -1;
-    tuning_ = true;
+    search_.start();
+    tuneResultReady_ = false; searchApply_ = true; searchDirty_ = true;
   }
-  bool autoTuning() const override { return tuning_; }
+  bool autoTuning() const override { return search_.active(); }
   std::string autoTuneStatus() const override {
     char b[72];
-    if (tuning_) {
-      int i = tuneIdx_ < kNumCands ? tuneIdx_ : kNumCands - 1;
-      const Cand& c = kCands[i];
-      std::snprintf(b, sizeof(b), "TUNE %d/%d %lu/%lurd i%d b%d", i + 1, kNumCands,
-                    (unsigned long)(reads_ - tuneStartReads_), (unsigned long)kTuneTargetReads, c.init, c.byte);
-    } else if (tuneBestIdx_ >= 0) {
-      const Cand& c = kCands[tuneBestIdx_];
-      std::snprintf(b, sizeof(b), "BEST i%d b%d f%d %drd", c.init, c.byte, c.frame, tuneBestScore_);
+    if (search_.active()) {
+      KwpTiming t = search_.current();
+      std::snprintf(b, sizeof(b), "CAL %d/%d i%d b%d f%d",
+                    search_.candIndex() + 1, KwpTuneSearch::totalCands(), t.init, t.byte, t.frame);
+    } else if (search_.done()) {
+      KwpTiming t = search_.best();
+      std::snprintf(b, sizeof(b), "TUNED i%d b%d f%d", t.init, t.byte, t.frame);
     } else b[0] = 0;
     return std::string(b);
   }
   bool takeAutoTuneResult(int& initMs, int& byteMs, int& frameMs) override {
     if (!tuneResultReady_) return false;
     tuneResultReady_ = false;
-    const Cand& c = kCands[tuneBestIdx_ >= 0 ? tuneBestIdx_ : 0];
-    initMs = c.init; byteMs = c.byte; frameMs = c.frame;
+    KwpTiming t = search_.best();
+    initMs = t.init; byteMs = t.byte; frameMs = t.frame;
     return true;
+  }
+  // Restore a persisted sweep at boot; a snapshot is offered after each candidate.
+  void resumeSearch(const KwpTuneSearch::State& s) override {
+    search_.load(s);
+    if (search_.active()) searchApply_ = true;
+  }
+  bool takeSearchSnapshot(KwpTuneSearch::State& out) override {
+    if (!searchDirty_) return false;
+    searchDirty_ = false; out = search_.save(); return true;
   }
 
 private:
@@ -131,18 +140,15 @@ private:
     vTaskDelay(pdMS_TO_TICKS(2500 + extra * 900));
   }
 
-  // Auto "auto-tune": watch actual read THROUGHPUT while the user is looking at a
-  // gauge and, if it's abysmal, kick off the timing sweep in the background WITHOUT
-  // them having to find the menu item. Throughput (not connect-failure count) is
-  // the right signal because it catches BOTH failure modes: never-connects (~0
-  // reads) AND connects-then-drops-fast (a few reads then nothing). A healthy
-  // K-line does ~3-4 reads/s (~50+ per 15s window); < kMinReadsPerWindow means
-  // it's effectively broken. Gauges already show NO DATA when this fires, so the
-  // sweep costs nothing (and it early-exits once a timing works — see runTuneStep)
-  // and the winner persists for future drives. Once per boot; window resets
-  // whenever a gauge (re)opens (see setActive).
+  // Auto-start the deep sweep: watch actual read THROUGHPUT while the user is on a
+  // gauge and, if it's abysmal, kick it off WITHOUT them finding the menu.
+  // Throughput (not connect-failure count) is the right signal — it catches BOTH
+  // never-connects (~0 reads) AND connects-then-drops-fast (a few reads then
+  // nothing). A healthy K-line does ~3-4 reads/s (~50+ per 15s window);
+  // < kMinReadsPerWindow means broken. Fires once per boot, and never if a sweep
+  // is already running/resumed or has already completed (search_.done()).
   void checkThroughputAutoTune() {
-    if (autoTunedThisBoot_ || tuning_ || !active_) return;
+    if (autoTunedThisBoot_ || search_.active() || search_.done() || !active_) return;
     uint32_t now = millis();
     if (healthWindowStart_ == 0) { healthWindowStart_ = now; healthStartReads_ = reads_; return; }
     if (now - healthWindowStart_ < kHealthWindowMs) return;
@@ -150,46 +156,44 @@ private:
     healthWindowStart_ = now; healthStartReads_ = reads_;   // start the next window
   }
 
-  // One iteration of the timing sweep: apply the current candidate, connect to the
-  // engine and read grp1, counting reads. A candidate ends when it either PASSES
-  // (reaches kTuneTargetReads — a timing that sustains reads on this K-line) or is
-  // ruled out (dead-fast: almost nothing after kTuneDeadMs; or capped at
-  // kTuneCapMs). We EARLY-EXIT the whole sweep on the first pass rather than
-  // grinding all 9 — for an abysmal connection, any timing that holds 50 reads is
-  // the win, and the candidate list is ordered best-guess first. Bounds the sweep
-  // to ~15-30s typically instead of a flat 3 minutes.
-  void runTuneStep() {
+  // One iteration of the deep sweep. Apply the search's current candidate timing,
+  // (re)connect to the engine, and measure reads for a fixed window that starts
+  // only AFTER the connection is up (so scores compare read RATE fairly, not
+  // connect luck). A candidate ends when its measurement window elapses, or it's
+  // scored 0 if it never connects within kConnCapMs. The score is fed back to the
+  // search, progress is marked dirty for persistence, and on completion the winner
+  // is applied. Runs whenever the sweep is active (engine on), regardless of screen.
+  void runSearchStep() {
     uint32_t now = millis();
-    if (tuneApply_) {
-      const Cand& c = kCands[tuneIdx_];
-      kwp_.setTiming(c.init, c.byte, c.frame);
-      if (kwp_.isConnected()) kwp_.disconnect();   // force a fresh connect at this candidate's timing
-      tuneWindowStart_ = now; tuneStartReads_ = reads_; tuneApply_ = false;
+    if (searchApply_) {
+      KwpTiming t = search_.current();
+      kwp_.setTiming(t.init, t.byte, t.frame);
+      if (kwp_.isConnected()) kwp_.disconnect();     // fresh connect at this candidate's timing
+      candStart_ = now; candConnected_ = false; searchApply_ = false;
     }
-    if (ensureConnected(0x01)) {                    // engine ECU
+    if (ensureConnected(0x01)) {                      // engine ECU
+      if (!candConnected_) { candConnected_ = true; measStart_ = now; measReads_ = reads_; }
       SENSOR s[16]; int n = kwp_.readBlock(0x01, 1, 16, s); if (n > 0) ++reads_;
-    } else { vTaskDelay(pdMS_TO_TICKS(kwp_.magicOk ? 400 : 2500)); }
+    } else { backoffCold(); }
     connected_ = kwp_.isConnected();
-    uint32_t windowReads = reads_ - tuneStartReads_;
-    uint32_t elapsed = now - tuneWindowStart_;
-    bool passed   = windowReads >= kTuneTargetReads;                             // sustains reads -> good
-    bool deadFast = elapsed >= kTuneDeadMs && windowReads < kTuneDeadReads;      // basically nothing -> skip
-    bool capped   = elapsed >= kTuneCapMs;                                       // marginal -> give up
-    if (passed || deadFast || capped) {
-      tuneScore_[tuneIdx_] = static_cast<int>(windowReads);
-      if (passed) { finishTune(); return; }         // early-exit: first working timing wins
-      if (++tuneIdx_ >= kNumCands) finishTune();
-      else tuneApply_ = true;
+    // Fine stages measure longer for a bigger, less-noisy read count (see
+    // KwpTuneSearch::inFineStage) so ms-level differences are distinguishable.
+    uint32_t win = search_.inFineStage() ? kMeasWindowFineMs : kMeasWindowMs;
+    bool measured = candConnected_ && (now - measStart_ >= win);
+    bool gaveUp   = !candConnected_ && (now - candStart_ >= kConnCapMs);
+    if (measured || gaveUp) {
+      int score = candConnected_ ? static_cast<int>(reads_ - measReads_) : 0;
+      search_.report(score);
+      searchDirty_ = true;                            // persist progress after each candidate
+      if (search_.done()) {
+        KwpTiming t = search_.best();
+        kwp_.setTiming(t.init, t.byte, t.frame);      // apply the winner
+        tuneResultReady_ = true;                       // App persists + shows result
+      } else {
+        searchApply_ = true;                           // set up the next candidate
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(30));
-  }
-  void finishTune() {
-    int best = -1, bestScore = -1;
-    for (int i = 0; i < kNumCands; ++i) if (tuneScore_[i] > bestScore) { bestScore = tuneScore_[i]; best = i; }
-    tuneBestIdx_ = best; tuneBestScore_ = bestScore;
-    const Cand& c = kCands[best >= 0 ? best : 0];
-    kwp_.setTiming(c.init, c.byte, c.frame);        // apply the winner immediately
-    tuning_ = false; tuneDone_ = true; tuneResultReady_ = true;
   }
 
   void taskLoop() {
@@ -224,7 +228,7 @@ private:
         continue;
       }
 
-      if (tuning_) { runTuneStep(); continue; }   // background timing sweep owns the K-line
+      if (search_.active()) { runSearchStep(); continue; }   // deep sweep owns the K-line while running
 
       uint8_t e = reqEcu_, g = reqGroup_;
       if (e == 0) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
@@ -281,20 +285,17 @@ private:
 
   // Auto-tuner: candidate init-pulse / inter-byte / block-delay sets to sweep.
   // Spread covers Maxi-K (init 190-210, inter-byte 4-7) and FIS-Control (50/85).
-  struct Cand { int init, byte, frame; };
-  static constexpr Cand kCands[] = {
-    {200,  5,  0}, {200, 10,  0}, {195,  5,  0}, {205,  5,  0}, {190,  4,  0},
-    {210,  7,  0}, {200, 25,  0}, {200, 50, 85}, {200,  4, 40},
-  };
-  static constexpr int kNumCands = sizeof(kCands) / sizeof(kCands[0]);
-  static constexpr uint32_t kTuneTargetReads = 50;   // reads that mark a candidate as working -> pass
-  static constexpr uint32_t kTuneCapMs   = 15000;    // max time on a marginal candidate before giving up
-  static constexpr uint32_t kTuneDeadMs  = 6000;     // abandon a candidate this fast if it's...
-  static constexpr uint32_t kTuneDeadReads = 3;      // ...read almost nothing (clearly wrong timing)
-  volatile bool tuning_ = false, tuneApply_ = false, tuneDone_ = false, tuneResultReady_ = false;
-  int tuneIdx_ = 0, tuneBestIdx_ = -1, tuneBestScore_ = -1;
-  int tuneScore_[kNumCands] = {0};
-  uint32_t tuneWindowStart_ = 0, tuneStartReads_ = 0;
+  // Deep coarse-to-fine timing search (resumable). search_ holds the algorithm +
+  // persisted progress; the task measures each candidate and feeds back the score.
+  KwpTuneSearch search_;
+  volatile bool searchApply_ = false;    // (re)apply timing + reconnect for the current candidate
+  volatile bool searchDirty_ = false;    // new progress to persist (App polls takeSearchSnapshot)
+  volatile bool tuneResultReady_ = false; // sweep finished; winner ready for the App to persist
+  uint32_t candStart_ = 0, measStart_ = 0, measReads_ = 0;
+  bool candConnected_ = false;
+  static constexpr uint32_t kMeasWindowMs     = 15000;  // coarse-stage measurement window
+  static constexpr uint32_t kMeasWindowFineMs = 25000;  // fine stages measure longer (less noisy scores)
+  static constexpr uint32_t kConnCapMs        = 8000;   // score 0 if a candidate can't connect within this
 };
 
 } // namespace mmi
