@@ -49,6 +49,10 @@ class KWP {
     // (also written to dbg, so /kwpdbg surfaces it) reports each target address
     // tried; a positive StartComm reply is 83 F1 <addr> C1 <KB1> <KB2> <cs>.
     String fastInitProbe(uint8_t addr);
+    // Send one raw KWP2000 (ISO 14230) request frame (checksum appended here) and
+    // capture the reply as hex. Used only by the fast-init probe to exercise the
+    // full handshake on-car; read-only.
+    String kwp2000Frame(const uint8_t* body, int n, const char* label);
     // Per-vehicle KWP1281 timing (Maxi-K "Adaptation"). initBitMs = 5-baud bit
     // period (~200); interByteMs = inter-byte W4 pause before each complement ACK
     // (0 = as fast as possible; raise it if an ECU drops blocks); blockDelayMs =

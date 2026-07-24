@@ -144,6 +144,13 @@ String KWP::fastInitProbe(uint8_t addr) {
     for (int i = 0; i < n; ++i) { char b[6]; snprintf(b, sizeof(b), " %02X", rx[i]); out += b; }
     if (n >= 6 && rx[0] == 0x83 && rx[3] == 0xC1) {  // positive StartComm response
       char b[48]; snprintf(b, sizeof(b), "  <- KWP2000 OK (KB %02X %02X)\n", rx[4], rx[5]); out += b;
+      // Exercise the live path so one drive tells us if it's buildable: start a
+      // diagnostic session, then read one data record (raw). A 50/61 reply
+      // confirms sessions/reads work and shows the data format for this EDC15.
+      uint8_t sds[5] = { 0x82, tgt, 0xF1, 0x10, 0x89 };   // StartDiagnosticSession
+      out += kwp2000Frame(sds, 5, "  StartDiagSession(10 89) ->");
+      uint8_t rd[5]  = { 0x82, tgt, 0xF1, 0x21, 0x01 };   // ReadDataByLocalIdentifier 0x01
+      out += kwp2000Frame(rd, 5, "  ReadLocalId(21 01) ->");
       out += "RESULT: fast-init SUPPORTED -> KWP2000 path is viable\n";
       Serial2.end();
       dbg = out;
@@ -154,6 +161,24 @@ String KWP::fastInitProbe(uint8_t addr) {
   }
   out += "RESULT: no fast-init response -> ECU is KWP1281-only (keep 5-baud)\n";
   dbg = out;
+  return out;
+}
+
+String KWP::kwp2000Frame(const uint8_t* body, int n, const char* label) {
+  delay(60);                                   // ISO 14230 P3: gap before the next request
+  drainRx();
+  uint8_t cs = 0; for (int i = 0; i < n; ++i) cs += body[i];
+  for (int i = 0; i < n; ++i) obdWrite(body[i]);   // obdWrite drops each byte's echo
+  obdWrite(cs);
+  uint8_t rx[24]; int m = 0;
+  unsigned long deadline = millis() + 300;
+  while ((long)(millis() - deadline) < 0 && m < 24) {
+    if (Serial2.available()) { rx[m++] = (uint8_t)Serial2.read(); deadline = millis() + 50; }
+  }
+  String out = label;
+  if (m == 0) out += " (no reply)";
+  for (int i = 0; i < m; ++i) { char b[6]; snprintf(b, sizeof(b), " %02X", rx[i]); out += b; }
+  out += "\n";
   return out;
 }
 
