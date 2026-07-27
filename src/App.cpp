@@ -21,6 +21,9 @@ static constexpr int kCharsetLen = 41;
 // Abandon a deep sweep after this many consecutive boot-resumes without a single
 // candidate completing (a crash/hang loop). Reset to 0 whenever one completes.
 static constexpr int kMaxSweepResumes = 5;
+// Bumped when a fix should abandon any in-flight sweep once on first boot (clean
+// recovery). Stored in NVS as kwp.fixver.
+static constexpr int kFixVersion = 2922;
 
 static std::string fmt(const Measurement& m) {
   if (!m.numeric()) return m.text;
@@ -53,6 +56,15 @@ void App::begin() {
   // Restore the deep timing sweep across power cycles: an in-flight sweep resumes
   // where it left off (spanning several drives), and a COMPLETED one is restored
   // as done so it never auto-triggers again (see KwpTuneSearch / checkThroughput).
+  // Clean-recovery safeguard: a sweep saved by the pre-fix firmware may be the one
+  // that boot-looped, so abandon any in-flight sweep ONCE on the first boot of this
+  // build. Future sweeps (written by this build onward) carry the marker and resume
+  // normally. This makes the recovery flash come up with a clean slate.
+  if (storage_.getInt("kwp.fixver", 0) < kFixVersion) {
+    storage_.putInt("kwp.sw_act", 0); storage_.putInt("kwp.sw_dun", 0);
+    storage_.putInt("kwp.sw_res", 0); storage_.putInt("kwp.fixver", kFixVersion);
+    storage_.commit();
+  }
   { int swAct = storage_.getInt("kwp.sw_act", 0), swDun = storage_.getInt("kwp.sw_dun", 0);
     // Boot-loop breaker: count resumes of an in-flight sweep. The counter is reset
     // to 0 every time a candidate completes (tick, below), so legitimate multi-drive
