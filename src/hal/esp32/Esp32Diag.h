@@ -20,7 +20,9 @@ public:
   void begin() {
     mtx_ = xSemaphoreCreateMutex();
     baud9600_[0x01] = true;   // engine ECU (EDC15) is 9600 on this car -> start correct, no 10400 probe
-    xTaskCreatePinnedToCore(&Esp32Diag::thunk, "kwp", 4096, this, 1, &task_, 0);
+    // 8KB stack: the KWP task nests readBlock -> parseGroup (VLA) -> getSensorData
+    // (String temporaries) with a SENSOR[16] local; 4KB was uncomfortably tight.
+    xTaskCreatePinnedToCore(&Esp32Diag::thunk, "kwp", 8192, this, 1, &task_, 0);
   }
 
   bool isConnected() const override { return connected_; }
@@ -60,6 +62,9 @@ public:
     active_ = a;
   }
   uint32_t coldFails() const { return coldFails_; }  // consecutive un-synced cold-connect failures
+  // Min free stack (bytes) the KWP task has ever had — a small number means it's
+  // near overflow. Surfaced in /status to confirm/rule-out a stack-overflow hang.
+  uint32_t taskStackFree() const { return task_ ? uxTaskGetStackHighWaterMark(task_) : 0; }
   bool usingFastInit() const { return kwp_.isKwp2000() || kwp_.isObd2(); }
   const char* protoName() const {                          // live engine protocol, for telemetry
     return kwp_.isObd2() ? "obd2" : kwp_.isKwp2000() ? "kwp2000" : "kwp1281";

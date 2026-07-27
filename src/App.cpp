@@ -18,6 +18,9 @@ App::App(IDisplay& display, IInputs& inputs, IBluetooth& bt, IStorage& storage, 
 
 static const char* kCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -+/.";
 static constexpr int kCharsetLen = 41;
+// Abandon a deep sweep after this many consecutive boot-resumes without a single
+// candidate completing (a crash/hang loop). Reset to 0 whenever one completes.
+static constexpr int kMaxSweepResumes = 5;
 
 static std::string fmt(const Measurement& m) {
   if (!m.numeric()) return m.text;
@@ -51,6 +54,19 @@ void App::begin() {
   // where it left off (spanning several drives), and a COMPLETED one is restored
   // as done so it never auto-triggers again (see KwpTuneSearch / checkThroughput).
   { int swAct = storage_.getInt("kwp.sw_act", 0), swDun = storage_.getInt("kwp.sw_dun", 0);
+    // Boot-loop breaker: count resumes of an in-flight sweep. The counter is reset
+    // to 0 every time a candidate completes (tick, below), so legitimate multi-drive
+    // resumes never accumulate — but a sweep that keeps crashing/hanging before
+    // finishing a single candidate trips this and is abandoned, so a bad candidate
+    // can never brick the whole drive again.
+    if (swAct && !swDun) {
+      int res = storage_.getInt("kwp.sw_res", 0) + 1;
+      storage_.putInt("kwp.sw_res", res); storage_.commit();
+      if (res > kMaxSweepResumes) {                 // it's not making progress -> give up
+        storage_.putInt("kwp.sw_act", 0); storage_.putInt("kwp.sw_dun", 1); storage_.commit();
+        swAct = 0; swDun = 1;                        // keep current timing; don't resume
+      }
+    }
     if (swAct || swDun) {
       KwpTuneSearch::State sw{};
       sw.stage    = (int16_t)storage_.getInt("kwp.sw_stg", 0);
@@ -447,6 +463,7 @@ void App::tick(uint32_t nowMs) {
       storage_.putInt("kwp.sw_frm", sw.curFrame);storage_.putInt("kwp.sw_bsc", sw.bestScore);
       storage_.putInt("kwp.sw_bvl", sw.bestVal); storage_.putInt("kwp.sw_inc", sw.incScore);
       storage_.putInt("kwp.sw_act", sw.active);  storage_.putInt("kwp.sw_dun", sw.done);
+      storage_.putInt("kwp.sw_res", 0);          // a candidate completed -> clear the boot-loop counter
       storage_.commit();
     } }
 

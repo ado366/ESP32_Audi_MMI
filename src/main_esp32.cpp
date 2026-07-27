@@ -86,7 +86,7 @@ void setup() {
     snprintf(b, sizeof(b),
       "{\"up_s\":%lu,\"heap\":%u,\"link\":%s,\"dev\":\"%s\",\"play\":%s,\"call\":%d,"
       "\"sco\":%s,\"title\":\"%s\",\"kwp\":%s,\"fisfail\":%lu,\"cd\":%s,\"rl1\":\"%s\",\"rl2\":\"%s\","
-      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d,\"tune\":\"%s\",\"acts\":\"%s\",\"proto\":\"%s\"}",
+      "\"reads\":%lu,\"raw\":[%d,%d,%d],\"ctx\":%d,\"tune\":\"%s\",\"acts\":\"%s\",\"proto\":\"%s\",\"kwpstk\":%lu}",
       (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
       s.linked ? "true" : "false", dev.c_str(), s.playing ? "true" : "false",
       (int)s.call, s.scoOpen ? "true" : "false", title.c_str(),
@@ -96,7 +96,8 @@ void setup() {
       inputs.rawLadder(0), inputs.rawLadder(1), inputs.rawLadder(2),
       app ? (int)app->context() : -1, tune.c_str(),
       app ? app->actionTrace().c_str() : "",     // recent actions: catch phantom inputs
-      diag.protoName());   // which engine protocol is live: kwp2000 / obd2 / kwp1281
+      diag.protoName(),    // which engine protocol is live: kwp2000 / obd2 / kwp1281
+      (unsigned long)diag.taskStackFree());   // KWP task min free stack (bytes)
     return std::string(b);
   });
   ota.setBc127Console([](const std::string& c) { bt.sendCommand(c); },

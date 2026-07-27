@@ -139,6 +139,7 @@ String KWP::fastInitProbe(uint8_t addr) {
     unsigned long deadline = millis() + 400;
     while ((long)(millis() - deadline) < 0 && n < 16) {
       if (Serial2.available()) { rx[n++] = (uint8_t)Serial2.read(); deadline = millis() + 60; }
+      else delay(1);   // yield while waiting (see obdRead: WDT / core-0 starvation)
     }
     { char b[24]; snprintf(b, sizeof(b), "tgt %02X -> %d:", tgt, n); out += b; }
     for (int i = 0; i < n; ++i) { char b[6]; snprintf(b, sizeof(b), " %02X", rx[i]); out += b; }
@@ -176,6 +177,7 @@ int KWP::kwp2000Send(const uint8_t* body, int n, uint8_t* rx, int maxRx, bool ga
   unsigned long deadline = millis() + 300;
   while ((long)(millis() - deadline) < 0 && m < maxRx) {
     if (Serial2.available()) { rx[m++] = (uint8_t)Serial2.read(); deadline = millis() + 50; }
+    else delay(1);   // yield while waiting (see obdRead: WDT / core-0 starvation)
   }
   return m;
 }
@@ -628,7 +630,7 @@ void KWP::obdWrite(uint8_t data) {
   // back on RX. Read and discard that echo so it isn't mistaken for the module's
   // reply/complement. We confirmed the echo is always present (loopback probe).
   unsigned long start = millis();
-  while (!Serial2.available() && millis() - start < 100) {}
+  while (!Serial2.available() && millis() - start < 100) { delay(1); }   // yield (see obdRead)
   if (Serial2.available()) Serial2.read();   // drop our own echoed byte
 }
 
@@ -645,6 +647,11 @@ uint8_t KWP::obdRead() {
       errorTimeout++;
       return 0;
     }
+    delay(1);   // CRITICAL: yield so core-0 idle runs and the task watchdog is fed.
+                // Busy-waiting here through a bad-timing candidate's repeated ~1s
+                // timeouts (during the auto-calibration) starved the core and tripped
+                // the WDT -> reset -> the resumable sweep re-triggered it -> boot loop
+                // that looked like a full-drive freeze.
   }
   uint8_t data = Serial2.read();
   return data;
@@ -773,6 +780,7 @@ bool KWP::KWPReceiveBlock(char s[], int maxsize, int &size, bool init_delay) {
       errorTimeout++;
       return false;
     }
+    delay(1);   // yield while waiting for the next byte (see obdRead: WDT / core-0 starvation)
   }
   Serial.print(F("IN: sz="));
   Serial.print(size);
