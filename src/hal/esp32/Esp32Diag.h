@@ -57,6 +57,9 @@ public:
     kwp_.setTiming(initBitMs, interByteMs, blockDelayMs);
   }
   void stopReading() override { reqEcu_ = 0; reqGroup_ = 0; stopReq_ = true; }
+  // Revert to holding the base ECU (engine) without disconnecting — called on
+  // non-diagnostics screens so the engine session stays alive across the UI.
+  void holdBase() override { reqEcu_ = 0; reqGroup_ = 0; }
   void setActive(bool a) override {                  // gauge on screen -> fast reads; else keep-alive
     if (a && !active_) { coldFails_ = 0; healthWindowStart_ = 0; }  // fresh health count per gauge-open
     active_ = a;
@@ -260,8 +263,12 @@ private:
 
       if (search_.active()) { runSearchStep(); continue; }   // deep sweep owns the K-line while running
 
-      uint8_t e = reqEcu_, g = reqGroup_;
-      if (e == 0) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+      // Default to HOLDING the engine (base ECU) whenever nothing else is being
+      // read: connect it at startup and keep it alive on every screen, so a gauge
+      // (or re-opening one) is instant. A diagnostics screen reading a different
+      // module sets reqEcu_ to switch; leaving it (holdBase) reverts here to engine.
+      uint8_t e = reqEcu_ ? reqEcu_ : baseEcu_;
+      uint8_t g = reqEcu_ ? reqGroup_ : baseGroup_;
       // A 5-baud init that aborts leaves the EDC15 deaf for ~seconds, so a failed
       // connect normally waits 2.5s. But if the magic already synced (baud right,
       // noise killed a later stage) the init did NOT abort — retry fast.
@@ -298,6 +305,9 @@ private:
   Group latest_;
   std::vector<Dtc> faults_;
   volatile uint8_t reqEcu_ = 0, reqGroup_ = 0, curEcu_ = 0, curGroup_ = 0, faultEcu_ = 0;
+  // Base ECU held whenever nothing else is requested: the engine, from startup on.
+  static constexpr uint8_t baseEcu_ = 0x01;   // engine (EDC15)
+  static constexpr uint8_t baseGroup_ = 1;    // light keep-alive group on the engine
   volatile bool connected_ = false, haveData_ = false, stopReq_ = false;
   volatile bool active_ = false;   // a gauge is on screen (fast poll vs keep-alive)
   volatile uint32_t coldFails_ = 0;        // consecutive un-synced cold-connect failures

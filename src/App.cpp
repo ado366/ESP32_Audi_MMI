@@ -459,6 +459,10 @@ void App::tick(uint32_t nowMs) {
   // through the running-engine noise). A call also drops to keep-alive so there's
   // no fast-read churn while the call screen is up.
   diag_.setActive(isDiagScreen() && bt_.status().call == CallState::Idle);
+  // Off any diagnostics screen, revert the KWP target to the engine (base) so the
+  // engine session is held from startup across every screen — only a diagnostics
+  // screen reading a different module switches away (see Esp32Diag task loop).
+  if (!isDiagScreen()) diag_.holdBase();
 
   // Auto-tuner finished: adopt + persist the winning KWP timing (fires once).
   { int ti, tb, tf;

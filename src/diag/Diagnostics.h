@@ -72,6 +72,9 @@ public:
   // otherwise the task keeps reading/reconnecting in the background forever
   // (observed churning during a phone call). Default no-op (emulator).
   virtual void stopReading() {}
+  // Revert to holding the base ECU (engine) without disconnecting — used on
+  // non-diagnostics screens to keep the engine session alive across the whole UI.
+  virtual void holdBase() {}
   // "Connect once and forget": true while a gauge is on screen (poll fast), false
   // otherwise (slow keep-alive that HOLDS the engine session instead of dropping
   // it, so re-opening a gauge is instant rather than a ~15-20s cold reconnect).
