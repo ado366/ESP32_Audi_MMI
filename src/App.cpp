@@ -238,7 +238,11 @@ void App::seedDefaultGauges() {
   bool migrated = false;
   for (int i = 0; i < presets_.size(); ++i) {
     Preset& p = presets_.at(i);
-    if (p.ecu == ecu::Dashboard && p.group == 1 && std::strcmp(p.label, "SPEED") == 0) {
+    if (std::strcmp(p.label, "SPEED") == 0 && (p.ecu != kSpeedEcu || p.group != kSpeedGroup)) {
+      // Any SPEED preset must read the engine (the always-held base ECU), never
+      // the cluster — otherwise viewing it in Favourites switches modules and pays
+      // a full KWP reconnect. Broadened from the old cluster-grp1-only match so it
+      // catches stale/edited SPEED presets too. Idempotent once it's engine grp6.
       p.ecu = kSpeedEcu; p.group = kSpeedGroup; p.valueIndex = kSpeedVi; migrated = true;
     } else if (p.ecu == ecu::Engine && p.group == 1 && p.valueIndex == 2 &&
                std::strcmp(p.label, "COOLANT") == 0) {
