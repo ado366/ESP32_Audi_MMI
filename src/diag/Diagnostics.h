@@ -75,6 +75,9 @@ public:
   // Revert to holding the base ECU (engine) without disconnecting — used on
   // non-diagnostics screens to keep the engine session alive across the whole UI.
   virtual void holdBase() {}
+  // Point the base keep-alive at a given ecu/group (App sets the speed group so
+  // the speedo cache is always warm — opening it is instant, no group-switch gap).
+  virtual void setBaseRead(uint8_t ecu, uint8_t group) {}
   // "Connect once and forget": true while a gauge is on screen (poll fast), false
   // otherwise (slow keep-alive that HOLDS the engine session instead of dropping
   // it, so re-opening a gauge is instant rather than a ~15-20s cold reconnect).

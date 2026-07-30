@@ -60,6 +60,9 @@ public:
   // Revert to holding the base ECU (engine) without disconnecting — called on
   // non-diagnostics screens so the engine session stays alive across the UI.
   void holdBase() override { reqEcu_ = 0; reqGroup_ = 0; }
+  // Set which ecu/group the base keep-alive reads (App points this at the speed
+  // group so the speedo cache is always warm).
+  void setBaseRead(uint8_t ecu, uint8_t group) override { baseEcu_ = ecu; baseGroup_ = group; }
   void setActive(bool a) override {                  // gauge on screen -> fast reads; else keep-alive
     if (a && !active_) { coldFails_ = 0; healthWindowStart_ = 0; }  // fresh health count per gauge-open
     active_ = a;
@@ -305,9 +308,12 @@ private:
   Group latest_;
   std::vector<Dtc> faults_;
   volatile uint8_t reqEcu_ = 0, reqGroup_ = 0, curEcu_ = 0, curGroup_ = 0, faultEcu_ = 0;
-  // Base ECU held whenever nothing else is requested: the engine, from startup on.
-  static constexpr uint8_t baseEcu_ = 0x01;   // engine (EDC15)
-  static constexpr uint8_t baseGroup_ = 1;    // light keep-alive group on the engine
+  // Base ECU + group held whenever nothing else is requested: the engine, from
+  // startup on. The group is the SPEED group (set by App via setBaseRead) so the
+  // cache always has fresh speed and opening the speedo is instant — no group-
+  // switch read gap ("KWP NO DATA" flash).
+  volatile uint8_t baseEcu_ = 0x01;   // engine (EDC15)
+  volatile uint8_t baseGroup_ = 6;    // speed group (kSpeedGroup); keep it hot for the speedo
   volatile bool connected_ = false, haveData_ = false, stopReq_ = false;
   volatile bool active_ = false;   // a gauge is on screen (fast poll vs keep-alive)
   volatile uint32_t coldFails_ = 0;        // consecutive un-synced cold-connect failures

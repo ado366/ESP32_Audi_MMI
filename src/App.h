@@ -107,11 +107,11 @@ private:
   std::vector<float> graph_;          // ring of samples (drives the standalone auto-scale)
   std::vector<float> graph2_;         // second series (dual-trace graph, dotted)
   GraphScope         scope_;          // rolling left-to-right graph buffer (FIS-Control style)
-  float              scopeMin_ = 0, scopeMax_ = 1;  // scale locked per sweep (standalone auto-scale)
+  float              scopeMin_ = 0, scopeMax_ = 1;  // stable auto-scale (expand-only, persisted per group/value)
   bool               scopeLocked_ = false;
   uint32_t           scopeKey_ = 0xFFFFFFFF;         // (ecu/group/value/preset) currently plotted; change -> restart
   static constexpr int kScopeStep = 2;   // px the cursor advances per sample
-  static constexpr int kScopeGap  = 4;   // px cleared ahead of the cursor (the visible cut)
+  static constexpr int kScopeGap  = 8;   // px cleared ahead of the cursor (wide cut so no old-sweep fragments linger)
   int                graphVal_ = 0;   // which group value the graph plots (0..3)
   bool               graphDual_ = false; // also plot the NEXT value as a dotted trace
   std::string        graphHdr_;       // graph header, rate-limited (full-row repaint)

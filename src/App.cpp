@@ -214,6 +214,9 @@ static constexpr int     kSpeedoOffsetKmh = 2;
 // engine ECU (single KWP connection); the user can edit or delete in-menu.
 // Guarded by a one-time flag so deletions stick.
 void App::seedDefaultGauges() {
+  // Keep the always-held engine session hot on the SPEED group so opening the
+  // speedo is instant (the cache already has it — no group-switch "NO DATA" gap).
+  diag_.setBaseRead(kSpeedEcu, kSpeedGroup);
   auto add = [&](uint8_t ecu, uint8_t group, uint8_t vi, View v, float mn, float mx, const char* label) {
     Preset p; p.ecu = ecu; p.group = group; p.valueIndex = vi; p.view = v; p.min = mn; p.max = mx;
     std::strncpy(p.label, label, 8); p.label[8] = 0; presets_.add(p);
@@ -330,12 +333,26 @@ void App::pushScopeSample() {
   float mn, mx;
   if (preset) { const Preset& p = presets_.at(diagPresetIdx_); mn = p.min; mx = p.max; }
   else {
-    if (!scopeLocked_ || scope_.atSweepStart()) {
-      mn = mx = graph_.empty() ? v : graph_[0];
-      for (float s : graph_) { if (s < mn) mn = s; if (s > mx) mx = s; }
-      if (v < mn) mn = v; if (v > mx) mx = v;
-      float pad = (mx - mn) * 0.1f; if (pad < 1.f) pad = 1.f;
-      scopeMin_ = mn - pad; scopeMax_ = mx + pad; scopeLocked_ = true;
+    // Stable autoscale: seed from the scale LEARNED for this group/value in past
+    // sessions (persisted to NVS), then only EXPAND to fit new extremes — never
+    // rescale per sweep. So the graph stops jumping around and settles to a fixed
+    // min/max that grows to cover the signal and is remembered next time.
+    char kmn[16], kmx[16];
+    std::snprintf(kmn, sizeof(kmn), "gl.%u.%d", static_cast<unsigned>(readGroup_), graphVal_);
+    std::snprintf(kmx, sizeof(kmx), "gh.%u.%d", static_cast<unsigned>(readGroup_), graphVal_);
+    if (!scopeLocked_) {
+      int32_t sl = storage_.getInt(kmn, 0x7fffffff), sh = storage_.getInt(kmx, 0x7fffffff);
+      if (sl != 0x7fffffff && sh != 0x7fffffff && sh > sl) { scopeMin_ = sl / 10.f; scopeMax_ = sh / 10.f; }
+      else { scopeMin_ = scopeMax_ = v; }
+      scopeLocked_ = true;
+    }
+    bool grew = false;
+    if (v < scopeMin_) { scopeMin_ = v; grew = true; }
+    if (v > scopeMax_) { scopeMax_ = v; grew = true; }
+    if (grew) {   // persist the expanded scale for future sessions on this group/value
+      storage_.putInt(kmn, static_cast<int32_t>(std::lround(scopeMin_ * 10)));
+      storage_.putInt(kmx, static_cast<int32_t>(std::lround(scopeMax_ * 10)));
+      storage_.commit();
     }
     mn = scopeMin_; mx = scopeMax_;
   }
@@ -1213,24 +1230,26 @@ void App::renderDiag() {
     return;
   }
   const int kDiagTop = 25, kLineH = 8;   // 7px glyph + 1px gap between every line
+  const int kValCells = 12;              // 12 * 5px compressed = 60px, fits 64
   for (int i = 0; i < group_.count && i < 4; ++i) {
     int y = kDiagTop + i * kLineH * 2;
     if (y + kLineH + 7 > 88) break;
-    std::string val = fmt(group_.values[i]);
-    // Right-align in a FIXED-width field via leading spaces, not by moving x. The
-    // old right-align recomputed the value's x from its width, so a reading that
-    // changed digit count shifted the op's x — which broke the frame differ's slot
-    // match and forced a full-screen redraw that reprinted (flashed) the labels.
-    // A fixed-slot overlay repaints ONLY the value row in place, so the labels stay
-    // put once drawn, even when the value changes or a read skips a beat.
-    const int kValCells = 12;                        // 12 * 5px compressed = 60px, fits 64
-    if (static_cast<int>(val.size()) < kValCells) val = std::string(kValCells - val.size(), ' ') + val;
     // Real VCDS field name when we have one for this ECU; the generic formula-
     // derived label is often wrong per-block (grp2 field 4 is coolant, not MAF).
     const char* lbl = (readEcu_ == ecu::Engine && screen_ == Screen::DiagReadGroup)
                           ? engineFieldLabel(readGroup_, i) : nullptr;
     display_.drawText(0, static_cast<uint8_t>(y), kFontCompressedLeft, lbl ? lbl : group_.values[i].label.c_str()); // label (static -> not resent)
-    display_.drawTextOverlay(0, static_cast<uint8_t>(y + kLineH), kFontCompressedLeft, 64, val.c_str());            // value (fixed slot -> in-place)
+    // Value: LEFT-aligned, and drawn as one fixed-slot overlay PER CHARACTER. The
+    // frame differ then resends only the character cells that actually changed —
+    // unchanged digits AND the units stay untouched (no full-row rewrite, so no
+    // flicker). Trailing cells are blanked with spaces so a shrinking value leaves
+    // no leftover digits.
+    std::string val = fmt(group_.values[i]);
+    int vy = y + kLineH;
+    for (int c = 0; c < kValCells; ++c) {
+      char cell[2] = { c < static_cast<int>(val.size()) ? val[c] : ' ', 0 };
+      display_.drawTextOverlay(static_cast<uint8_t>(c * 5), static_cast<uint8_t>(vy), kFontCompressedLeft, 5, cell);
+    }
   }
 }
 
