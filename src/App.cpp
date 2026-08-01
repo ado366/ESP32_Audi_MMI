@@ -93,6 +93,7 @@ void App::begin() {
       diag_.resumeSearch(sw);
     } }
   readEcu_ = static_cast<uint8_t>(storage_.getInt("diag.ecu", ecu::Engine));  // last SELECT ECU choice
+  serviceMode_ = storage_.getInt("svc.mode", 0) != 0;   // K-line stays released across reboots until disabled
   bt_.onStatusChanged([this]() { dirty_ = true; });
   menu_.onSelect([this](MenuId id) { onMenuSelect(id); });
   dirty_ = true;
@@ -305,6 +306,13 @@ bool App::isDiagScreen() const {
          screen_ == Screen::DiagGraph || screen_ == Screen::DiagBoost ||
          screen_ == Screen::DiagFaults || screen_ == Screen::Speedo;
 }
+// Screens that actually read the KWP K-line (so they must be blocked while service
+// mode has released the bus for an external VCDS).
+bool App::screenNeedsKline(Screen s) {
+  return s == Screen::DiagFavourites || s == Screen::DiagReadGroup ||
+         s == Screen::DiagGraph || s == Screen::DiagBoost ||
+         s == Screen::DiagFaults || s == Screen::Speedo;
+}
 
 // The current screen renders the rolling line graph (standalone GRAPH VALUE, or a
 // favourite whose view is Graph).
@@ -448,7 +456,8 @@ void App::tick(uint32_t nowMs) {
   // closed 20s after the last input while you were watching live values.
   if (bt_.status().call == CallState::Idle &&
       ((menuOpen_ && screen_ == Screen::None) ||
-       (screen_ != Screen::None && !isDiagScreen() && screen_ != Screen::Service)) &&  // service mode must not time out (would re-take the bus mid-VCDS)
+       (screen_ != Screen::None && !isDiagScreen() &&
+        screen_ != Screen::Service && screen_ != Screen::ServiceConfirm)) &&  // service screens must not time out (would re-take the bus mid-VCDS)
       now_ - lastInputMs_ > kHomeTimeoutMs) {
     menuOpen_ = false; screen_ = Screen::None; dirty_ = true;
   }
@@ -484,9 +493,14 @@ void App::tick(uint32_t nowMs) {
   // engine session is held from startup across every screen — only a diagnostics
   // screen reading a different module switches away (see Esp32Diag task loop).
   if (!isDiagScreen()) diag_.holdBase();
-  // Service mode tracks the Service screen exactly: the K-line is released only
-  // while that screen is shown, and re-taken on any exit (Back/Menu/call/timeout).
-  diag_.setServiceMode(screen_ == Screen::Service);
+  // Service mode is a persistent state: the K-line stays released until it's
+  // deliberately disabled. While on, entering any screen that would read the
+  // K-line is intercepted with a confirm prompt (scroll down + select to disable).
+  if (serviceMode_ && screenNeedsKline(screen_)) {
+    pendingScreen_ = screen_; svcConfirmArmed_ = false;
+    screen_ = Screen::ServiceConfirm; menuOpen_ = false; dirty_ = true;
+  }
+  diag_.setServiceMode(serviceMode_);
 
   // Auto-tuner finished: adopt + persist the winning KWP timing (fires once).
   { int ti, tb, tf;
@@ -695,9 +709,22 @@ bool App::handleScreen(Action a) {
     else if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
     return true;
   }
-  if (screen_ == Screen::Service) {                 // K-line released; hold here until Back
-    if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
-    return true;                                     // consume everything else so nothing re-takes the bus
+  if (screen_ == Screen::Service) {                 // K-line released; service mode PERSISTS after leaving
+    if (a == Action::Select) { pendingScreen_ = Screen::None; svcConfirmArmed_ = false; screen_ = Screen::ServiceConfirm; dirty_ = true; }
+    else if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }   // leave the screen; service mode stays ON
+    return true;
+  }
+  if (screen_ == Screen::ServiceConfirm) {          // "disable service mode?" — scroll down to arm, select to confirm
+    if (a == Action::ScrollDown)    { svcConfirmArmed_ = true;  dirty_ = true; }
+    else if (a == Action::ScrollUp) { svcConfirmArmed_ = false; dirty_ = true; }
+    else if (a == Action::Select && svcConfirmArmed_) {
+      serviceMode_ = false; storage_.putInt("svc.mode", 0); storage_.commit();   // deliberate disable
+      Screen p = pendingScreen_; pendingScreen_ = Screen::None; svcConfirmArmed_ = false;
+      if (p != Screen::None) openScreen(p); else screen_ = Screen::None;         // proceed to what they tried to open
+      dirty_ = true;
+    }
+    else if (a == Action::Back) { pendingScreen_ = Screen::None; svcConfirmArmed_ = false; screen_ = Screen::None; dirty_ = true; }  // cancel: stay in service mode
+    return true;
   }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::EncoderMonitor ||
       screen_ == Screen::Bc127Debug ||
@@ -889,13 +916,15 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::DiagGraph:      readGroup_ = storage_.getInt("diag.group", 2); openScreen(Screen::DiagGraph);     break;
     case MenuId::DiagBoost:      readEcu_ = ecu::Engine; readGroup_ = 11; openScreen(Screen::DiagBoost); break;  // TURBO: engine grp 11 field 3 (boost, mbar->bar)
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
-    case MenuId::DiagVagcom:     openScreen(Screen::Service);        break;  // release K-line for external VCDS
+    case MenuId::DiagVagcom:     serviceMode_ = true; storage_.putInt("svc.mode", 1); storage_.commit();
+                                 openScreen(Screen::Service); break;   // release K-line for external VCDS (persists)
 
     // ---- Adaptation (per-vehicle KWP timing) ----
     case MenuId::AdaptInit:      adaptField_ = 0; openScreen(Screen::Adapt); break;
     case MenuId::AdaptByte:      adaptField_ = 1; openScreen(Screen::Adapt); break;
     case MenuId::AdaptFrame:     adaptField_ = 2; openScreen(Screen::Adapt); break;
-    case MenuId::AdaptAutoTune:  diag_.startAutoTune();
+    case MenuId::AdaptAutoTune:  if (serviceMode_) { showInfo("SERVICE MODE", {"K-LINE RELEASED", "DISABLE IT FIRST"}); break; }
+                                 diag_.startAutoTune();
                                  showInfo("AUTO TUNE", {"SWEEPING K-LINE", "ENGINE ON, ~3 MIN", "SAVES BEST AUTO"}); break;
 
     // ---- Debug ----
@@ -1341,8 +1370,17 @@ void App::renderScreen() {
     display_.drawText(0, 0,  kFontCentered, "SERVICE MODE");
     display_.drawText(0, 22, kFontCompressedLeft, "K-LINE RELEASED");
     display_.drawText(0, 34, kFontCompressedLeft, "CONNECT VCDS NOW");
-    display_.drawText(0, 46, kFontCompressedLeft, "ALL MODULES FREE");
-    display_.drawText(0, 68, kFontCompressedLeft, "BACK = RESUME");
+    display_.drawText(0, 46, kFontCompressedLeft, "STAYS ON TIL OFF");
+    display_.drawText(0, 68, kFontCompressedLeft, "SEL=OFF BACK=KEEP");
+    return;
+  }
+  if (screen_ == Screen::ServiceConfirm) {
+    display_.drawText(0, 0,  kFontCentered, "SERVICE MODE ON");
+    display_.drawText(0, 20, kFontCompressedLeft, "DISABLE & RE-TAKE");
+    display_.drawText(0, 32, kFontCompressedLeft, "THE K-LINE?");
+    display_.drawText(0, 52, svcConfirmArmed_ ? kFontCompressedInverted : kFontCompressedLeft,
+                      svcConfirmArmed_ ? " DISABLE  (SEL) " : "SCROLL DOWN...");
+    display_.drawText(0, 66, kFontCompressedLeft, "BACK = KEEP ON");
     return;
   }
   if (screen_ == Screen::Charset) {

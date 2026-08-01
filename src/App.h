@@ -48,7 +48,8 @@ private:
     SelectEcu, // pick the KWP module to talk to
     Adapt,     // per-vehicle KWP timing adjuster (init pulse / inter-byte / inter-frame)
     Charset,   // ROM character explorer (raw byte -> glyph), for mapping accents
-    Service,   // K-line released for an external VCDS (service mode)
+    Service,        // K-line released for an external VCDS (service mode)
+    ServiceConfirm, // "disable service mode?" prompt (scroll down + select)
     Info   // generic title + text lines (version, confirmations, placeholders)
   };
 
@@ -65,6 +66,7 @@ private:
   void renderCalibrate();
   void sampleDiag();             // periodic measuring-value read while a diag screen is open
   bool isDiagScreen() const;
+  static bool screenNeedsKline(Screen s);   // true for screens that read the KWP K-line
   bool isGraphView() const;      // the current screen shows the rolling-scope line graph
   void pushScopeSample();        // feed one sample into the rolling graph (scale-aware)
   Context deriveContext() const;
@@ -99,6 +101,12 @@ private:
   Context  ctx_ = Context::NowPlaying;
   bool     menuOpen_ = false;
   Screen   screen_ = Screen::None;
+  // Service mode: a PERSISTENT state (K-line released for an external VCDS) that
+  // stays on until deliberately disabled — not tied to the Service screen. While
+  // on, opening a K-line screen is intercepted with a scroll-down + confirm prompt.
+  bool     serviceMode_ = false;
+  Screen   pendingScreen_ = Screen::None;   // K-line screen to open after disabling
+  bool     svcConfirmArmed_ = false;        // scrolled down to arm the disable
   int      listIndex_ = 0;
   uint8_t  micGain_ = 8;
   bool     micLoop_ = false;
