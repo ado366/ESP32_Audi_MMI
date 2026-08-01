@@ -72,6 +72,10 @@ public:
   // otherwise the task keeps reading/reconnecting in the background forever
   // (observed churning during a phone call). Default no-op (emulator).
   virtual void stopReading() {}
+  // Service mode: fully release the K-line (disconnect and stay off it) so an
+  // external tester (VCDS) can reach every module without bus contention.
+  virtual void setServiceMode(bool on) {}
+  virtual bool serviceMode() const { return false; }
   // Revert to holding the base ECU (engine) without disconnecting — used on
   // non-diagnostics screens to keep the engine session alive across the whole UI.
   virtual void holdBase() {}

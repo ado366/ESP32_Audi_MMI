@@ -34,7 +34,8 @@ static const MenuItem kDiagnostics[] = {
   LEAF("SELECT ECU", DiagSelectEcu),
   LEAF("SPEEDO",     DiagSpeedo),
   LEAF("TURBO",      DiagBoost),
-  // Hidden (unbuilt, low value): DISP MODE (DiagDisplayMode), VAG-COM (DiagVagcom).
+  LEAF("SERVICE MODE",DiagVagcom),   // release the K-line so an external VCDS can reach all modules
+  // Hidden (unbuilt, low value): DISP MODE (DiagDisplayMode).
 };
 
 static const MenuItem kAdaptation[] = {

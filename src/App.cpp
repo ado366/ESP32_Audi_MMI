@@ -448,7 +448,7 @@ void App::tick(uint32_t nowMs) {
   // closed 20s after the last input while you were watching live values.
   if (bt_.status().call == CallState::Idle &&
       ((menuOpen_ && screen_ == Screen::None) ||
-       (screen_ != Screen::None && !isDiagScreen())) &&
+       (screen_ != Screen::None && !isDiagScreen() && screen_ != Screen::Service)) &&  // service mode must not time out (would re-take the bus mid-VCDS)
       now_ - lastInputMs_ > kHomeTimeoutMs) {
     menuOpen_ = false; screen_ = Screen::None; dirty_ = true;
   }
@@ -484,6 +484,9 @@ void App::tick(uint32_t nowMs) {
   // engine session is held from startup across every screen — only a diagnostics
   // screen reading a different module switches away (see Esp32Diag task loop).
   if (!isDiagScreen()) diag_.holdBase();
+  // Service mode tracks the Service screen exactly: the K-line is released only
+  // while that screen is shown, and re-taken on any exit (Back/Menu/call/timeout).
+  diag_.setServiceMode(screen_ == Screen::Service);
 
   // Auto-tuner finished: adopt + persist the winning KWP timing (fires once).
   { int ti, tb, tf;
@@ -692,6 +695,10 @@ bool App::handleScreen(Action a) {
     else if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
     return true;
   }
+  if (screen_ == Screen::Service) {                 // K-line released; hold here until Back
+    if (a == Action::Back) { screen_ = Screen::None; dirty_ = true; }
+    return true;                                     // consume everything else so nothing re-takes the bus
+  }
   if (screen_ == Screen::ButtonMonitor || screen_ == Screen::EncoderMonitor ||
       screen_ == Screen::Bc127Debug ||
       screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo || screen_ == Screen::OneDevice) {
@@ -882,6 +889,7 @@ void App::onMenuSelect(MenuId id) {
     case MenuId::DiagGraph:      readGroup_ = storage_.getInt("diag.group", 2); openScreen(Screen::DiagGraph);     break;
     case MenuId::DiagBoost:      readEcu_ = ecu::Engine; readGroup_ = 11; openScreen(Screen::DiagBoost); break;  // TURBO: engine grp 11 field 3 (boost, mbar->bar)
     case MenuId::DiagReadFaults: openScreen(Screen::DiagFaults);     break;
+    case MenuId::DiagVagcom:     openScreen(Screen::Service);        break;  // release K-line for external VCDS
 
     // ---- Adaptation (per-vehicle KWP timing) ----
     case MenuId::AdaptInit:      adaptField_ = 0; openScreen(Screen::Adapt); break;
@@ -1327,6 +1335,14 @@ void App::renderScreen() {
     display_.drawText(0, 28, kFontCentered, l);
     display_.drawText(0, 60, kFontCompressedLeft, "ROT=ADJUST");
     display_.drawText(0, 72, kFontCompressedLeft, "SEL=SAVE");
+    return;
+  }
+  if (screen_ == Screen::Service) {
+    display_.drawText(0, 0,  kFontCentered, "SERVICE MODE");
+    display_.drawText(0, 22, kFontCompressedLeft, "K-LINE RELEASED");
+    display_.drawText(0, 34, kFontCompressedLeft, "CONNECT VCDS NOW");
+    display_.drawText(0, 46, kFontCompressedLeft, "ALL MODULES FREE");
+    display_.drawText(0, 68, kFontCompressedLeft, "BACK = RESUME");
     return;
   }
   if (screen_ == Screen::Charset) {

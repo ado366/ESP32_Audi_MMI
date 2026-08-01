@@ -60,6 +60,10 @@ public:
   // Revert to holding the base ECU (engine) without disconnecting — called on
   // non-diagnostics screens so the engine session stays alive across the UI.
   void holdBase() override { reqEcu_ = 0; reqGroup_ = 0; }
+  // Service mode: disconnect and keep the task completely off the K-line so an
+  // external VCDS can drive the bus. Takes priority over everything in the task.
+  void setServiceMode(bool on) override { serviceMode_ = on; }
+  bool serviceMode() const override { return serviceMode_; }
   // Set which ecu/group the base keep-alive reads (App points this at the speed
   // group so the speedo cache is always warm).
   void setBaseRead(uint8_t ecu, uint8_t group) override { baseEcu_ = ecu; baseGroup_ = group; }
@@ -234,6 +238,12 @@ private:
 
   void taskLoop() {
     for (;;) {
+      if (serviceMode_) {                // SERVICE MODE: fully release the K-line for an external VCDS
+        if (kwp_.isConnected()) kwp_.disconnect();
+        connected_ = false; haveData_ = false;
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       if (stopReq_) {                    // leave the K-line idle off diag screens
         stopReq_ = false;
         if (kwp_.isConnected()) kwp_.disconnect();
@@ -316,6 +326,7 @@ private:
   volatile uint8_t baseGroup_ = 6;    // speed group (kSpeedGroup); keep it hot for the speedo
   volatile bool connected_ = false, haveData_ = false, stopReq_ = false;
   volatile bool active_ = false;   // a gauge is on screen (fast poll vs keep-alive)
+  volatile bool serviceMode_ = false;   // K-line released for an external VCDS
   volatile uint32_t coldFails_ = 0;        // consecutive un-synced cold-connect failures
   bool autoTunedThisBoot_ = false;         // background sweep auto-fired once already
   uint32_t healthWindowStart_ = 0, healthStartReads_ = 0;   // read-throughput window

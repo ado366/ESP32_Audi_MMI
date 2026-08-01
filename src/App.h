@@ -48,6 +48,7 @@ private:
     SelectEcu, // pick the KWP module to talk to
     Adapt,     // per-vehicle KWP timing adjuster (init pulse / inter-byte / inter-frame)
     Charset,   // ROM character explorer (raw byte -> glyph), for mapping accents
+    Service,   // K-line released for an external VCDS (service mode)
     Info   // generic title + text lines (version, confirmations, placeholders)
   };
 
