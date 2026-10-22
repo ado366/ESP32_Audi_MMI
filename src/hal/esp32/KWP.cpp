@@ -1,6 +1,7 @@
 #include "KWP.h"
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include "../../diag/EngineLabels.h"
 
 #define DEBUG_LEVEL 1
 
@@ -37,30 +38,46 @@ KWP::~KWP(){
   //obd = NULL;
 }
 
-bool KWP::connect(uint8_t addr, int baudrate) {
+bool KWP::connect(uint8_t addr, int baudrate, int idleMs) {
   char db[80];
   snprintf(db, sizeof(db), "connect a=%02X b=%d rx=%d tx=%d\n", addr, baudrate, _OBD_RX_PIN, _OBD_TX_PIN);
   dbg = db;
+  const unsigned long t0 = millis();   // per-stage timestamps (ms since connect start) for /kwpdbg
+  auto stamp = [&](const char* what) { char t[48]; snprintf(t, sizeof(t), "@%lums %s\n", millis() - t0, what); dbg += t; };
   blockCounter = 0;
+  interByteMs_ = baseInterByteMs_;  // connect handshake always on the tuned timing
   magicOk = false;                 // cleared until the 0x55 01 8A sync proves the baud
   pinMode(_OBD_TX_PIN, OUTPUT);
   digitalWrite(_OBD_TX_PIN, HIGH); // hold the K-line idle-high for the ISO 9141 W5
-  delay(300);                      // bus-idle time (>=300ms) so the ECU sees a clean
+  delay(idleMs);                   // bus-idle time (>=300ms) so the ECU sees a clean
                                    // start bit. An aborted handshake leaves an EDC15
                                    // mis-synced/deaf; a guaranteed idle gap before the
                                    // 5-baud address is the standard "won't init" fix.
+  stamp("idle done");
   KWP5BaudInit(addr);
-  dbg += "5baud sent, waiting reply...\n";
+  stamp("5baud sent, waiting reply...");
   Serial2.begin(baudrate, SERIAL_8N1, _OBD_RX_PIN, _OBD_TX_PIN);
   char s[3];
   int size = 3;
-  if (!KWPReceiveBlock(s, 3, size)) { dbg += "no reply (KWPReceiveBlock timeout)\n"; return false; }
+  // The complement of keyword 2 (0x8A -> 0x75) goes out after the inter-byte
+  // pause. ISO 9141 W4 is 25-50ms; the engine's auto-tuned 1ms suits the EDC15
+  // (and the cluster tolerates it), but the airbag module misses a 1ms reply and
+  // restarts the sync (next byte read was 0x55 -> "block len 86"). So every
+  // module except the engine gets a standard-compliant 25ms for this one byte.
+  const int tunedW4 = interByteMs_;
+  if (addr != ADR_Engine && interByteMs_ < 25) interByteMs_ = 25;
+  bool gotMagic = KWPReceiveBlock(s, 3, size);
+  interByteMs_ = tunedW4;
+  if (!gotMagic) { dbg += "no reply (KWPReceiveBlock timeout)\n"; logConn(addr, baudrate, "no reply", millis() - t0); return false; }
   snprintf(db, sizeof(db), "got magic %02X %02X %02X\n", (uint8_t)s[0], (uint8_t)s[1], (uint8_t)s[2]);
   dbg += db;
+  stamp("magic in");
   if (    (((uint8_t)s[0]) != 0x55)
      ||   (((uint8_t)s[1]) != 0x01)
      ||   (((uint8_t)s[2]) != 0x8A)   ){
     dbg += "ERROR: invalid magic (want 55 01 8A)\n";
+    snprintf(db, sizeof(db), "bad magic %02X %02X %02X", (uint8_t)s[0], (uint8_t)s[1], (uint8_t)s[2]);
+    logConn(addr, baudrate, db, millis() - t0);
     disconnect();
     errorData++;
     return false;
@@ -70,8 +87,10 @@ bool KWP::connect(uint8_t addr, int baudrate) {
   magicOk = true;                  // baud confirmed by the sync; keep it even if the
                                    // connect-block read below fails on a noisy K-line
   dbg += "magic OK, reading connect blocks...\n";
-  if (!readConnectBlocks()) { dbg += "readConnectBlocks failed\n"; return false; }
-  dbg += "CONNECTED\n";
+  if (!readConnectBlocks()) { dbg += "readConnectBlocks failed\n"; logConn(addr, baudrate, "id blocks failed", millis() - t0); return false; }
+  if (addr == ADR_Dashboard) interByteMs_ = kClusterInterByteMs;   // per-module session timing
+  stamp("CONNECTED");
+  logConn(addr, baudrate, "OK", millis() - t0);
   return true;
 }
 
@@ -321,30 +340,72 @@ int KWP::readFaultCodes(uint16_t codes[], uint8_t info[], int maxCodes) {
   while (true) {
     int size = 0;
     char r[64];
-    if (!KWPReceiveBlock(r, 64, size)) return n;
+    // A dropped link mid-list is a FAILED read (-1), not "n faults" — returning
+    // the partial count made a dead link show as "NONE FOUND".
+    if (!KWPReceiveBlock(r, 64, size)) return -1;
     uint8_t title = (uint8_t)r[2];
     if (title == 0x09) break;                    // acknowledge / no more faults
-    if (title != 0xFC) break;                    // unexpected
+    if (title != 0xFC) return -1;                // unexpected (e.g. NAK)
     int nd = (size - 4) / 3;                      // data = indices 3..size-2
     for (int i = 0; i < nd && n < maxCodes; ++i) {
-      codes[n] = (uint16_t)(((uint8_t)r[3 + i * 3] << 8) | (uint8_t)r[3 + i * 3 + 1]);
+      uint16_t code = (uint16_t)(((uint8_t)r[3 + i * 3] << 8) | (uint8_t)r[3 + i * 3 + 1]);
+      if (code == 0xFFFF) continue;               // FF FF 88 = "no fault codes" marker, not a DTC
+      codes[n] = code;
       info[n]  = (uint8_t)r[3 + i * 3 + 2];
       ++n;
     }
-    if (!KWPSendAckBlock()) return n;             // ask for the next block
+    if (!KWPSendAckBlock()) return -1;            // ask for the next block
   }
   return n;
 }
 
-// KWP1281: clear stored fault codes (title 0x05); ECU replies with ACK 0x09.
+// KWP1281: clear stored fault codes (title 0x05). The ECU answers either with a
+// plain ACK (0x09) or with the fault codes still stored after the clear (0xFC
+// blocks, "FF FF 88" = none left), which must each be ACKed until the closing
+// 0x09 — leaving them un-ACKed desyncs the session. Reply is traced to dbg.
 bool KWP::clearFaultCodes() {
   char s[8];
   sprintf(s, "\x03%c\x05\x03", blockCounter);
-  if (!KWPSendBlock(s, 4)) return false;
-  int size = 0;
-  char r[64];
-  if (!KWPReceiveBlock(r, 64, size)) return false;
-  return (uint8_t)r[2] == 0x09;
+  dbg = "clear faults:";
+  if (!KWPSendBlock(s, 4)) { dbg += " send failed\n"; return false; }
+  for (int guard = 0; guard < 16; ++guard) {
+    int size = 0;
+    char r[64];
+    if (!KWPReceiveBlock(r, 64, size)) { dbg += " no reply\n"; return false; }
+    char hx[8];
+    dbg += " [";
+    for (int i = 2; i < size - 1; ++i) { snprintf(hx, sizeof(hx), i > 2 ? " %02X" : "%02X", (uint8_t)r[i]); dbg += hx; }
+    dbg += "]";
+    uint8_t title = (uint8_t)r[2];
+    if (title == 0x09) { dbg += " OK\n"; return true; }
+    if (title != 0xFC) { dbg += " refused\n"; return false; }   // e.g. 0x0A NAK
+    if (!KWPSendAckBlock()) { dbg += " ack failed\n"; return false; }
+  }
+  dbg += " too many blocks\n";
+  return false;
+}
+
+// Clean module switch: KWP1281 "end communication" (title 0x06) tells the ECU
+// to release the session instead of leaving it waiting on a half-open link
+// (which could still be transmitting/timing out while the next module's 5-baud
+// init goes out on the shared K-line). Best-effort, then the normal teardown.
+void KWP::endSession() {
+  if (connected && !kwp2000_ && !obd2_) {
+    char s[8];
+    sprintf(s, "\x03%c\x06\x03", blockCounter);
+    softMode_ = true; KWPSendBlock(s, 4); softMode_ = false;
+  }
+  disconnect();
+}
+
+// One line per connect attempt (newest last, ~12 kept) for /kwpdbg.
+void KWP::logConn(uint8_t addr, int baud, const char* result, unsigned long ms) {
+  char l[64];
+  snprintf(l, sizeof(l), "t=%lus %02X@%d %s %lums\n", (unsigned long)(millis() / 1000), addr, baud, result, ms);
+  connHist += l;
+  int lines = 0;
+  for (unsigned i = 0; i < connHist.length(); ++i) if (connHist[i] == '\n') ++lines;
+  while (lines-- > 12) connHist = connHist.substring(connHist.indexOf('\n') + 1);
 }
 
 void KWP::disconnect() {
@@ -404,25 +465,35 @@ int KWP::parseGroup(uint8_t addr, int group, const uint8_t* triples, int count, 
   char buf[len + 1];
   blockDescs.toCharArray(buf, len + 1);
   char* command = strtok(buf, ",");
-  int j = 0;
+  // Raw triples of the last block, surfaced via /kwpdbg for checking labels.
+  char raw[24];
+  snprintf(raw, sizeof(raw), "%02X g%d:", addr, group);
+  lastRaw = raw;
+  // Fields stay POSITIONAL: every triple yields a slot, so the label tables
+  // (indexed by field) line up even when a field has no name. Dropping unnamed
+  // fields used to shift later values up a slot — or blank a whole group when
+  // the ECU had no description table entry (e.g. engine grp 7, oil temp).
   for (int idx = 0; idx < count; idx++) {
     byte k = triples[idx * 3];
     byte a = triples[idx * 3 + 1];
     byte b = triples[idx * 3 + 2];
-    String desc = command ? String(command) : String("");
+    snprintf(raw, sizeof(raw), " %u,%u,%u", k, a, b);
+    lastRaw += raw;
+    const char* name = (addr == ADR_Engine) ? mmi::engineFieldLabel((uint8_t)group, idx) : nullptr;
+    // The engine branch of getBlockDesc is a PETROL (06A AUM) table — wrong for
+    // this TDI, so engine fields only take names from EngineLabels.h.
+    String desc = name ? String(name) : ((command && addr != ADR_Engine) ? String(command) : String(""));
+    if (desc == "") { snprintf(raw, sizeof(raw), "VALUE %d", idx + 1); desc = raw; }
     SENSOR sensor = getSensorData(k, a, b);
-    if (desc != "" && sensor.value != "") {
-      res[j].type = sensor.type;
-      res[j].a = sensor.a;
-      res[j].b = sensor.b;
-      res[j].desc = desc;
-      res[j].value = sensor.value;
-      res[j].units = sensor.units;
-      j++;
-    }
-    command = strtok(0, ",");
+    res[idx].type = sensor.type;
+    res[idx].a = sensor.a;
+    res[idx].b = sensor.b;
+    res[idx].desc = desc;
+    res[idx].value = sensor.value;
+    res[idx].units = sensor.units;
+    if (command) command = strtok(0, ",");
   }
-  return j;
+  return count;
 }
 
 SENSOR KWP::getSensorData(byte k, byte a, byte b) {
@@ -437,7 +508,7 @@ SENSOR KWP::getSensorData(byte k, byte a, byte b) {
     String t = "";
     float v = 0;
     String units = "";
-    char buf[32];
+    char buf[32] = "";
     switch (k){
       case 1:  v=0.2*a*b;             units=F("rpm"); break;
       case 2:  v=a*0.002*b;           units=F("%"); break; // case 2:  v=a*0.002*b;            units=F("%%");break;
@@ -456,18 +527,18 @@ SENSOR KWP::getSensorData(byte k, byte a, byte b) {
       case 15: v=0.01*a*b;            units=F("ms");break;
       case 18: v=0.04*a*b;            units=F("mbar");break;
       case 19: v=a*b*0.01;            units=F("l");break;
-      case 20: v=a*(b-128)/128;       units=F("%");break; // case 20: v=a*(b-128)/128;       units=F("%%");break;
+      case 20: v=a*(b-128)/128.0f;       units=F("%");break; // case 20: v=a*(b-128)/128.0f;       units=F("%%");break;
       case 21: v=0.001*a*b;           units=F("V");break;
       case 22: v=0.001*a*b;           units=F("ms");break;
-      case 23: v=b/256*a;             units=F("%");break; //case 23: v=b/256*a;             units=F("%%");break;
+      case 23: v=b/256.0f*a;             units=F("%");break; //case 23: v=b/256.0f*a;             units=F("%%");break;
       case 24: v=0.001*a*b;           units=F("A");break;
-      case 25: v=(b*1.421)+(a/182);   units=F("g/s");break;
+      case 25: v=(b*1.421)+(a/182.0f);   units=F("g/s");break;
       case 26: v=float(b-a);          units=F("C");break;
       case 27: v=abs(b-128)*0.01*a;   units=F("Deg");break; //case 27: v=abs(b-128)*0.01*a;   units=F("Â°");break;
       case 28: v=float(b-a);          units=F(" ");break;
-      case 30: v=b/12*a;              units=F("Deg k/w");break;
-      case 31: v=b/2560*a;            units=F("Â°C");break;
-      case 33: v=100*b/a;             units=F("%");break; //case 33: v=100*b/a;             units=F("%%");break;
+      case 30: v=b/12.0f*a;              units=F("Deg k/w");break;
+      case 31: v=b/2560.0f*a;            units=F("Â°C");break;
+      case 33: v=a ? 100.0f*b/a : 0;             units=F("%");break; //case 33: v=a ? 100.0f*b/a : 0;             units=F("%%");break;
       case 34: v=(b-128)*0.01*a;      units=F("kW");break;
       case 35: v=0.01*a*b;            units=F("l/h");break;
       case 36: v=((unsigned long)a)*2560+((unsigned long)b)*10;  units=F("km");break;
@@ -480,7 +551,7 @@ SENSOR KWP::getSensorData(byte k, byte a, byte b) {
              default: sprintf(buf, F("ADP (%d,%d)"), a,b); t=String(buf); break;
           }*/
       case 38: v=(b-128)*0.001*a;        units=F("Deg k/w"); break;
-      case 39: v=b/256*a;                units=F("mg/h"); break;
+      case 39: v=b/256.0f*a;                units=F("mg/h"); break;
       case 40: v=b*0.1+(25.5*a)-400;     units=F("A"); break;
       case 41: v=b+a*255;                units=F("Ah"); break;
       case 42: v=b*0.1+(25.5*a)-400;     units=F("Kw"); break;
@@ -490,16 +561,16 @@ SENSOR KWP::getSensorData(byte k, byte a, byte b) {
       case 46: v=(a*b-3200)*0.0027;      units=F("Deg k/w"); break;
       case 47: v=(b-128)*a;              units=F("ms"); break;
       case 48: v=b+a*255;                units=F(" "); break;
-      case 49: v=(b/4)*a*0.1;            units=F("mg/h"); break;
-      case 50: v=(b-128)/(0.01*a);       units=F("mbar"); break;
-      case 51: v=((b-128)/255)*a;        units=F("mg/h"); break;
+      case 49: v=(b/4.0f)*a*0.1;            units=F("mg/h"); break;
+      case 50: v=a ? (b-128)/(0.01*a) : 0;       units=F("mbar"); break;
+      case 51: v=((b-128)/255.0f)*a;        units=F("mg/h"); break;
       case 52: v=b*0.02*a-a;             units=F("Nm"); break;
       case 53: v=(b-128)*1.4222+0.006*a;  units=F("g/s"); break;
       case 54: v=a*256+b;                units=F("count"); break;
-      case 55: v=a*b/200;                units=F("s"); break;
+      case 55: v=a*b/200.0f;                units=F("s"); break;
       case 56: v=a*256+b;                units=F("WSC"); break;
       case 57: v=a*256+b+65536;          units=F("WSC"); break;
-      case 59: v=(a*256+b)/32768;        units=F("g/s"); break;
+      case 59: v=(a*256+b)/32768.0f;        units=F("g/s"); break;
       case 60: v=(a*256+b)*0.01;         units=F("sec"); break;
       case 62: v=0.256*a*b;              units=F("S"); break;
       case 64: v=float(a+b);             units=F("Ohm"); break;
@@ -515,6 +586,10 @@ SENSOR KWP::getSensorData(byte k, byte a, byte b) {
     if (units.length() != 0){
       dtostrf(v,4, 2, buf);
       t=String(buf) + " " + units;
+    } else if (t.length() != 0) {
+      snprintf(buf, sizeof(buf), "%s", t.c_str());   // text reading (COLD/WARM, time)
+    } else if (!buf[0]) {
+      dtostrf(v,4, 2, buf);                          // unitless number (e.g. formula 37)
     }
     Serial.println(t);
 
@@ -735,6 +810,7 @@ bool KWP::KWPSendBlock(char *s, int size) {
 
 bool KWP::KWPReceiveBlock(char s[], int maxsize, int &size, bool init_delay) {
   bool ackeachbyte = false;
+  snprintf(lastRxErr, sizeof(lastRxErr), "?");
   uint8_t data = 0;
   int recvcount = 0;
   if (size == 0) ackeachbyte = true;
@@ -757,12 +833,14 @@ bool KWP::KWPReceiveBlock(char s[], int maxsize, int &size, bool init_delay) {
         size = data + 1;
         if (size > maxsize) {
           Serial.println("ERROR: invalid maxsize");
+          snprintf(lastRxErr, sizeof(lastRxErr), "block len %d too big", size);
           return false;
         }
       }
       if ((ackeachbyte) && (recvcount == 2)) {
         if (data != blockCounter){
           Serial.println(F("ERROR: invalid blockCounter"));
+          snprintf(lastRxErr, sizeof(lastRxErr), "bad counter %02X want %02X", data, blockCounter);
           disconnect();
           errorData++;
           return false;
@@ -776,6 +854,7 @@ bool KWP::KWPReceiveBlock(char s[], int maxsize, int &size, bool init_delay) {
     }
     if (millis() >= timeout){
       Serial.println(F("ERROR: timeout"));
+      snprintf(lastRxErr, sizeof(lastRxErr), "timeout after %d/%d bytes", recvcount, size);
       disconnect();
       errorTimeout++;
       return false;
@@ -806,26 +885,29 @@ bool KWP::KWPSendAckBlock() {
 bool KWP::readConnectBlocks() {
   Serial.println(F("------readconnectblocks"));
   String info;
-  while (true){
+  char hx[8];
+  for (int guard = 0; guard < 24; ++guard) {
     int size = 0;
     char s[64];
-    if (!(KWPReceiveBlock(s, 64, size))) return false;
+    if (!(KWPReceiveBlock(s, 64, size))) { dbg += "connect block "; dbg += String(guard); dbg += ": "; dbg += lastRxErr; dbg += "\n"; return false; }
     if (size == 0) return false;
-    if (s[2] == '\x09') break;
-    if (s[2] != '\xF6') {
-      Serial.println(F("ERROR: unexpected answer"));
-      disconnect();
-      errorData++;
-      return false;
+    uint8_t title = (uint8_t)s[2];
+    if (title == 0x09) { ecuId = info; dbg += "id: "; dbg += info; dbg += "\n"; return true; }
+    if (title == 0xF6) {
+      for (int i = 3; i < size - 1; ++i) {                     // ASCII ID text (s isn't NUL-terminated);
+        uint8_t ch = (uint8_t)s[i];                            // non-printables (incl. NUL, which cut off
+        if (ch >= 0x20 && ch < 0x7F) info += (char)ch;         // the rest of /kwpdbg) are dropped
+      }
+    } else {
+      // Some modules (e.g. airbag) send extra non-text connect blocks; log and ACK
+      // them instead of dropping a perfectly good session.
+      snprintf(hx, sizeof(hx), "blk %02X:", title); dbg += hx;
+      for (int i = 3; i < size - 1 && i < 16; ++i) { snprintf(hx, sizeof(hx), " %02X", (uint8_t)s[i]); dbg += hx; }
+      dbg += "\n";
     }
-    String text = String(s);
-    info += text.substring(3, size-2);
-    if (!KWPSendAckBlock()) return false;
+    if (!KWPSendAckBlock()) { dbg += "connect ack failed\n"; return false; }
   }
-  Serial.print("label=");
-  Serial.println(info);
-  ecuId = info;                       // part number + name, e.g. "038906018AH 1,9l R4 EDC ..."
-  dbg += "id: "; dbg += info; dbg += "\n";
-  return true;
+  dbg += "connect blocks: too many\n";
+  return false;
 }
 

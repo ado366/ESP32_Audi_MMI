@@ -14,15 +14,18 @@ namespace ecu {
 constexpr uint8_t Engine    = 0x01;
 constexpr uint8_t Gearbox   = 0x02;
 constexpr uint8_t Abs       = 0x03;
+constexpr uint8_t Airbag    = 0x15;
 constexpr uint8_t Dashboard = 0x17;
 
-// Pickable KWP1281 modules on a B5 (Airbag 0x15 deliberately excluded — unsafe).
+// Pickable KWP1281 modules on a B5. AIRBAG fault clearing asks for a second
+// press (App DiagFaults) — clearing it is deliberate, never a stray click.
 struct Module { uint8_t addr; const char* name; };
 static const Module kModules[] = {
   {0x01, "ENGINE"},
   {0x02, "GEARBOX"},
   {0x03, "ABS"},
   {0x08, "CLIMATE"},
+  {0x15, "AIRBAG"},
   {0x17, "CLUSTER"},
   {0x25, "IMMOBILIZER"},
   {0x35, "CENT CONV"},

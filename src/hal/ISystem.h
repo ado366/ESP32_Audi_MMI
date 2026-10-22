@@ -17,6 +17,11 @@ public:
   // Trigger a pull-OTA (join phone hotspot, download+flash). Returns false if it
   // couldn't start (e.g. no hotspot/URL configured). On success the device reboots.
   virtual bool pullUpdate() = 0;
+  // Live pull-update status for the Update screen ('\n'-separated lines, each
+  // <= 15 chars), or "" when no update has run. updating() = a pull is in
+  // progress (the screen must not time out meanwhile).
+  virtual std::string updateStatus() { return ""; }
+  virtual bool updating() { return false; }
 };
 
 } // namespace mmi

@@ -5,11 +5,12 @@
 namespace cfg {
 
 // Firmware version (shown on the Version screen + OTA page; bump per release).
-constexpr const char* FW_VERSION = "2.9.27";
+constexpr const char* FW_VERSION = "2.9.51";
 
 // Default pull-OTA source: the "latest" release asset on GitHub. Overridable via
 // the NVS key "ota.url". Publish firmware.bin as a release asset named exactly this.
 constexpr const char* OTA_URL = "https://github.com/ado366/ESP32_Audi_MMI/releases/latest/download/firmware.bin";
+constexpr const char* OTA_API_URL = "https://api.github.com/repos/ado366/ESP32_Audi_MMI/releases/latest";  // version check
 
 // Networks pull-OTA tries (in order) to reach the internet. Credentials live in
 // the gitignored Secrets.h (cfg::HOTSPOT_SSID/PASS, cfg::HOME_SSID/PASS); NVS

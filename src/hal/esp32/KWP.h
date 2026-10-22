@@ -33,7 +33,7 @@ class KWP {
   public:
     KWP(uint8_t receivePin, uint8_t transmitPin);
     ~KWP();
-    bool connect(uint8_t addr, int baudrate);
+    bool connect(uint8_t addr, int baudrate, int idleMs = 300);   // idleMs = W5 bus-idle before the 5-baud init
     // ISO 14230 fast-init + KWP2000 session for the engine ECU. Does the 25/25ms
     // wake, StartCommunication, StartDiagnosticSession and a validation read; on
     // success the session runs KWP2000 (readBlock dispatches to the 0x21 path) and
@@ -72,9 +72,13 @@ class KWP {
     // inter-frame W3 pause before sending a request/ack block.
     void setTiming(int initBitMs, int interByteMs, int blockDelayMs) {
       if (initBitMs  > 0) initBitMs_  = initBitMs;
-      if (interByteMs >= 0) interByteMs_ = interByteMs;
+      if (interByteMs >= 0) { interByteMs_ = interByteMs; baseInterByteMs_ = interByteMs; }
       if (blockDelayMs >= 0) blockDelayMs_ = blockDelayMs;
     }
+    char lastRxErr[40] = "";   // why the last KWPReceiveBlock failed (for /kwpdbg)
+    String connHist;  // last ~12 connect attempts: module, baud, result, duration
+    void endSession();   // send KWP1281 end-communication (0x06), then disconnect
+    String lastRaw; // raw (formula,a,b) triples of the last measuring block read
     String dbg;     // recent connect-flow trace, surfaced over WiFi for on-car debug
     String ecuId;   // connect-block ASCII: part number + ECU name
     // True once the last connect() saw the 0x55 0x01 0x8A sync — i.e. the baud is
@@ -94,6 +98,11 @@ class KWP {
     uint8_t currAddr = 0;
     uint8_t blockCounter = 0;
     volatile int initBitMs_ = 200;    // 5-baud bit period (Adaptation: init pulse)
+    void logConn(uint8_t addr, int baud, const char* result, unsigned long ms);
+    volatile int baseInterByteMs_ = 0; // tuned (engine) W4; per-module overrides apply on connect
+    // Cluster (17) measured on-car 2026-10-22: W4 0ms = 64-65 reads/20s vs 60-61 at
+    // the engine's tuned 1ms (2ms 59, 5ms 51, +10ms frame 59) — ~7% faster.
+    static constexpr int kClusterInterByteMs = 0;
     volatile int interByteMs_ = 0;    // W4 pause before each complement ACK (inter-byte)
     volatile int blockDelayMs_ = 0;   // W3 pause before sending a block (inter-frame)
     uint8_t errorTimeout = 0;

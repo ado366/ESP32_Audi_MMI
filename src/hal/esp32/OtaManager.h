@@ -96,6 +96,19 @@ public:
       if (kwpTest_) kwpTest_((uint8_t)ecu, (uint8_t)grp);
       server_.send(200, "text/plain", "connecting; read /kwpdbg");
     });
+    // Module-switch knobs (debug): ?end=0|1&idle=<engine ms>&oidle=<other ms>; no args = show.
+    server_.on("/kwpswitch", HTTP_GET, [this]() {
+      int e = server_.hasArg("end")  ? server_.arg("end").toInt()  : -1;
+      int i = server_.hasArg("idle") ? server_.arg("idle").toInt() : -1;
+      int o = server_.hasArg("oidle") ? server_.arg("oidle").toInt() : -1;
+      server_.send(200, "text/plain", kwpSwitch_ ? kwpSwitch_(e, i, o).c_str() : "");
+    });
+    // Engine group scan: ?start=1 reads every engine group 1..255 once; without
+    // it, returns the raw results so far.
+    server_.on("/kwpscan", HTTP_GET, [this]() {
+      if (server_.hasArg("start") && kwpScan_) { kwpScan_(); server_.send(200, "text/plain", "scan started; reload /kwpscan"); return; }
+      server_.send(200, "text/plain", kwpScanLog_ ? kwpScanLog_().c_str() : "");
+    });
     // Live KWP timing tune (Adaptation): ?init=<ms>&byte=<ms>&frame=<ms>. Any
     // omitted field keeps its current default. For sweeping inter-byte (W4) while
     // hunting the most reliable value on a noisy running-engine K-line.
@@ -190,6 +203,8 @@ public:
   void setKwpTest(std::function<void(uint8_t,uint8_t)> f) { kwpTest_ = std::move(f); }
   void setKwpTiming(std::function<void(int,int,int)> f) { kwpTiming_ = std::move(f); }
   void setKwpTune(std::function<void()> f) { kwpTune_ = std::move(f); }
+  void setKwpSwitch(std::function<std::string(int,int,int)> f) { kwpSwitch_ = std::move(f); }
+  void setKwpScan(std::function<void()> start, std::function<std::string()> log) { kwpScan_ = std::move(start); kwpScanLog_ = std::move(log); }
   // Browser control/debug UI: state = display frame + BT json; sink injects inputs.
   void setControlHooks(std::function<std::string()> state,
                        std::function<void(Control, int)> sink) { ctrlState_ = std::move(state); ctrlSink_ = std::move(sink); }
@@ -198,7 +213,7 @@ public:
     if (apUp_) server_.handleClient();
     // STA roaming: while not joined, retry the candidate networks round-robin.
     // WiFi.begin is async so a failed attempt costs nothing; 15s per try.
-    if (!staNets_.empty() && WiFi.status() != WL_CONNECTED) {
+    if (!staNets_.empty() && WiFi.status() != WL_CONNECTED && !roamPaused_) {
       uint32_t now = millis();
       if (now - staLastMs_ >= 15000) {
         staLastMs_ = now;
@@ -207,6 +222,52 @@ public:
       }
     }
   }
+  // A pull-OTA drives WiFi itself; stop the background roaming meanwhile.
+  void pauseRoaming(bool p) { roamPaused_ = p; }
+
+  // Download `url` and flash it, reporting progress (pct 0-100, bytes done,
+  // total or 0 if unknown). On failure returns false with a short reason in
+  // `err` (<= 15 chars, shown on the cluster). On success the caller reboots.
+  bool flashWithProgress(const std::string& url, std::function<void(int, size_t, size_t)> progress, std::string& err) {
+    WiFiClientSecure client; client.setInsecure();   // GitHub release CDN is HTTPS
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    http.setTimeout(15000);
+    if (!http.begin(client, url.c_str())) { err = "BAD URL"; return false; }
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+      char b[16]; snprintf(b, sizeof(b), code < 0 ? "NO SERVER %d" : "HTTP %d", code); err = b;
+      http.end(); return false;
+    }
+    int len = http.getSize();
+    if (!Update.begin(len > 0 ? (size_t)len : UPDATE_SIZE_UNKNOWN)) { err = "NO SPACE"; http.end(); return false; }
+    WiFiClient* st = http.getStreamPtr();
+    uint8_t buf[1024];
+    size_t done = 0;
+    uint32_t lastData = millis();
+    int lastPct = -1;
+    while (http.connected() && (len <= 0 || done < (size_t)len)) {
+      size_t avail = st->available();
+      if (!avail) {
+        if (millis() - lastData > 10000) break;      // stalled
+        delay(5); continue;
+      }
+      int n = st->readBytes(buf, avail > sizeof(buf) ? sizeof(buf) : avail);
+      if (n <= 0) continue;
+      if (Update.write(buf, n) != (size_t)n) { char b[16]; snprintf(b, sizeof(b), "FLASH ERR %u", Update.getError()); err = b; Update.abort(); http.end(); return false; }
+      done += n; lastData = millis();
+      int pct = len > 0 ? (int)(done * 100 / (size_t)len) : 0;
+      if (pct != lastPct) { lastPct = pct; if (progress) progress(pct, done, len > 0 ? (size_t)len : 0); }
+    }
+    http.end();
+    if (len > 0 && done != (size_t)len) {
+      char b[16]; snprintf(b, sizeof(b), "DL FAIL AT %d%%", lastPct < 0 ? 0 : lastPct); err = b;
+      Update.abort(); return false;
+    }
+    if (!Update.end(true)) { char b[16]; snprintf(b, sizeof(b), "VERIFY ERR %u", Update.getError()); err = b; return false; }
+    return true;
+  }
+
   // Home-network IP once joined ("0.0.0.0" if not connected).
   std::string staIP() const { return WiFi.localIP().toString().c_str(); }
 
@@ -264,6 +325,7 @@ private:
   WebServer   server_{80};
   std::string user_, otaPass_;
   std::vector<std::pair<std::string, std::string>> staNets_;  // roam candidates
+  volatile bool roamPaused_ = false;
   size_t   staIdx_    = 0;
   uint32_t staLastMs_ = 0;
   bool        apUp_ = false;
@@ -273,6 +335,9 @@ private:
   std::function<void(const std::string&)> bcSend_;
   std::function<std::string()> bcLog_;
   std::function<std::string()> kwpLog_;
+  std::function<void()> kwpScan_;
+  std::function<std::string(int,int,int)> kwpSwitch_;
+  std::function<std::string()> kwpScanLog_;
   std::function<void(int,int)> kwpProbe_;
   std::function<void(uint8_t)> kwpFastInit_;
   std::function<int(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t)> fisRect_;

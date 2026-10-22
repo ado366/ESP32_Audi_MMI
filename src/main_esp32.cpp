@@ -110,7 +110,9 @@ void setup() {
   });
   ota.setKwpTest([](uint8_t e, uint8_t g) { diag.requestRead(e, g); });  // connect+read at /kwptest
   ota.setKwpTiming([](int i, int b, int f) { diag.setTiming(i, b, f); }); // live W4 tune at /kwptiming
-  ota.setKwpTune([]() { diag.startAutoTune(); });   // start the timing auto-tuner at /kwptune
+  ota.setKwpTune([]() { diag.startAutoTune(); });
+  ota.setKwpSwitch([](int e, int i, int o) { diag.setSwitchOpts(e, i, o); return diag.switchOpts(); });   // /kwpswitch
+  ota.setKwpScan([]() { diag.requestScan(); }, []() { return diag.scanLog(); });      // /kwpscan   // start the timing auto-tuner at /kwptune
   // Browser control/debug UI at http://192.168.4.1/control — drive the whole UI
   // from a computer (no car buttons needed) and see the live FIS.
   ota.setControlHooks(

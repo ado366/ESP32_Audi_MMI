@@ -46,6 +46,15 @@ struct SpeedoRenderer {
     return b;
   }
 
+  // A single centered 7-seg middle bar ("-"): shown in place of the speed while
+  // there's no reading yet, so the screen looks like it's waiting, not broken.
+  static std::vector<uint8_t> dash(int w, int h) {
+    std::vector<uint8_t> b((w * h + 7) / 8, 0);
+    const int dw = 10, t = 2;                         // same size as one digit's 'g' bar
+    rect(b, w, h, (w - dw) / 2 + t, (h - t) / 2, dw - 2 * t, t);
+    return b;
+  }
+
   // Render `value` as big 7-seg digits, centered horizontally regardless of how
   // many digits (1/2/3) the number has.
   static std::vector<uint8_t> render(int value, int w, int h) {

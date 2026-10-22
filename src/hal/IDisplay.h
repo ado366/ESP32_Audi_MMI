@@ -16,6 +16,7 @@ constexpr uint8_t kFontLeft              = 0x01; // standard, positive, left
 constexpr uint8_t kFontCentered          = 0x21; // standard, positive, centered
 constexpr uint8_t kFontCompressedLeft    = 0x05; // compressed, positive, left
 constexpr uint8_t kFontCompressedCenter  = 0x25; // compressed, positive, centered
+constexpr uint8_t kFontCompressedRight   = 0x15; // compressed, positive, RIGHT-aligned (bit4 = right, per TLBFISLib)
 // Display-layer flag (NOT a FIS font bit): OR onto a base font to mark a row as
 // "highlighted". The esp32 display expands it into a filled inverse bar (XOR) +
 // the text drawn over it (XOR -> dark glyphs on a lit bar), and strips the flag

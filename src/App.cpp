@@ -8,6 +8,7 @@
 #include "diag/DtcElaboration.h"
 #include "diag/SpeedoRenderer.h"
 #include "diag/EngineLabels.h"
+#include "ui/FisFont.h"
 #include <cstdio>
 
 namespace mmi {
@@ -42,6 +43,9 @@ void App::begin() {
   // them empty (the flag matches the current layout).
   if (presets_.size() == 0 && storage_.getInt("diag.seeded", 0) != static_cast<int>(sizeof(Preset)))
     seedDefaultGauges();
+  // Hold the module the last-used gauge read (engine or cluster) from boot on.
+  holdEcu_ = storage_.getInt("kwp.hold", ecu::Engine) == ecu::Dashboard ? ecu::Dashboard : ecu::Engine;
+  applyHold();
   oneDevice_ = storage_.getInt("bt.single", 0) != 0;  // default OFF
   bt_.setSingleDevice(oneDevice_);
   adaptInit_  = storage_.getInt("kwp.init",  200);    // per-vehicle KWP timing
@@ -209,6 +213,22 @@ static constexpr uint8_t kSpeedVi    = 0;
 // The ECU's grp6 speed reads ~2 km/h under a GPS reference; add it back on the
 // full-screen speedo, but leave a genuine 0 as 0 (no phantom "2" while stopped).
 static constexpr int     kSpeedoOffsetKmh = 2;
+// The full-screen SPEEDO reads the CLUSTER instead: speed from cluster grp 1
+// value 1, plus oil temp from cluster grp 50 value 3 (the only oil-temp source on
+// this car — the engine ECU has none). Both are groups of the SAME module, so
+// alternating between them is a cheap group switch, not a reconnect. Cost: the
+// cluster's speed steps in 2 km/h, and the engine session is dropped while the
+// speedo is open. (Previous engine-sourced speedo: kSpeedEcu/kSpeedGroup.)
+static constexpr uint8_t  kSpeedoEcu    = ecu::Dashboard;
+static constexpr uint8_t  kSpeedoGroup  = 1;
+static constexpr uint8_t  kSpeedoVi     = 0;
+static constexpr uint8_t  kOilGroup     = 50;
+static constexpr uint8_t  kOilVi        = 2;
+static constexpr uint8_t  kAmbGroup     = 2;      // cluster grp 2 value 4 = ambient (outside) temp
+static constexpr uint8_t  kAmbVi        = 3;
+static constexpr uint32_t kOilEveryMs   = 5000;   // one slow read (oil / ambient, alternating) per 5s
+                                                  // -> each refreshes every ~10s; both move slowly
+static constexpr uint32_t kOilGiveUpMs  = 3000;   // grp 50 not answering -> back to speed
 
 // Seed a few useful favourites on first boot so the gauges work out-of-box (the
 // Favourites list was empty, hiding the whole feature). All gauges read the
@@ -439,11 +459,26 @@ void App::tick(uint32_t nowMs) {
     if (ev.control == Control::EncoderCW || ev.control == Control::EncoderCCW) {
       int steps = ev.encoderDelta >= 0 ? ev.encoderDelta : -ev.encoderDelta;
       Control dir = ev.encoderDelta >= 0 ? Control::EncoderCW : Control::EncoderCCW;
-      for (int i = 0; i < steps; ++i) dispatch(InputRouter::resolve(dir, ctx_));
+      if (screen_ == Screen::DiagReadGroup || screen_ == Screen::DiagGraph) {
+        // Group screens take the whole spin as ONE scroll carrying its detent
+        // count (stepGroup accelerates on it). Splitting it into per-detent steps
+        // lost all but the first to the nav cooldown, so fast spins moved by 1.
+        groupDetents_ = steps;
+        dispatch(InputRouter::resolve(dir, ctx_));
+        groupDetents_ = 1;
+      } else {
+        for (int i = 0; i < steps; ++i) dispatch(InputRouter::resolve(dir, ctx_));
+      }
     } else {
       dispatch(InputRouter::resolve(ev.control, ctx_));
     }
     ctx_ = deriveContext();
+  }
+
+  // Update screen: repaint whenever the pull-update status changes (progress).
+  if (screen_ == Screen::UpdateInfo && sys_) {
+    std::string st = sys_->updateStatus();
+    if (st != lastUpdStatus_) { lastUpdStatus_ = st; dirty_ = true; }
   }
 
   // Auto-return to Now-Playing after inactivity in a menu or a transient screen
@@ -457,7 +492,8 @@ void App::tick(uint32_t nowMs) {
   if (bt_.status().call == CallState::Idle &&
       ((menuOpen_ && screen_ == Screen::None) ||
        (screen_ != Screen::None && !isDiagScreen() &&
-        screen_ != Screen::Service && screen_ != Screen::ServiceConfirm)) &&  // service screens must not time out (would re-take the bus mid-VCDS)
+        screen_ != Screen::Service && screen_ != Screen::ServiceConfirm &&
+        !(screen_ == Screen::UpdateInfo && sys_ && sys_->updating()))) &&   // never abandon a running update  // service screens must not time out (would re-take the bus mid-VCDS)
       now_ - lastInputMs_ > kHomeTimeoutMs) {
     menuOpen_ = false; screen_ = Screen::None; dirty_ = true;
   }
@@ -763,8 +799,8 @@ bool App::handleScreen(Action a) {
   }
   if (screen_ == Screen::DiagGraph) {
     switch (a) {
-      case Action::ScrollDown: readGroup_++; saveDiagGroup(); group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
-      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; saveDiagGroup(); group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::ScrollDown: stepGroup(+1); group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
+      case Action::ScrollUp:   stepGroup(-1); group_.count = 0; graph_.clear(); graph2_.clear(); dirty_ = true; return true;
       case Action::Select:     // cycle WHICH value of the group is plotted
         graphVal_ = (graphVal_ + 1) % 4;
         graph_.clear(); graph2_.clear(); dirty_ = true; return true;
@@ -777,8 +813,8 @@ bool App::handleScreen(Action a) {
   }
   if (screen_ == Screen::DiagReadGroup) {
     switch (a) {
-      case Action::ScrollDown: readGroup_++; saveDiagGroup(); group_.count = 0; graph_.clear(); dirty_ = true; return true;
-      case Action::ScrollUp:   if (readGroup_ > 1) readGroup_--; saveDiagGroup(); group_.count = 0; graph_.clear(); dirty_ = true; return true;
+      case Action::ScrollDown: stepGroup(+1); group_.count = 0; graph_.clear(); dirty_ = true; return true;
+      case Action::ScrollUp:   stepGroup(-1); group_.count = 0; graph_.clear(); dirty_ = true; return true;
       case Action::Select:     startAddFavourite(); return true;   // add current group as a favourite
       case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
       default: return false;
@@ -800,10 +836,14 @@ bool App::handleScreen(Action a) {
   if (screen_ == Screen::DiagFaults) {
     int n = static_cast<int>(faults_.size());     // items = faults + a "CLEAR ALL" row
     switch (a) {
-      case Action::ScrollDown: if (faultsLoaded_) { listIndex_ = (listIndex_ + 1) % (n + 1); dirty_ = true; } return true;
-      case Action::ScrollUp:   if (faultsLoaded_) { listIndex_ = (listIndex_ + n) % (n + 1); dirty_ = true; } return true;
+      case Action::ScrollDown: if (faultsLoaded_) { listIndex_ = (listIndex_ + 1) % (n + 1); clearArmed_ = false; dirty_ = true; } return true;
+      case Action::ScrollUp:   if (faultsLoaded_) { listIndex_ = (listIndex_ + n) % (n + 1); clearArmed_ = false; dirty_ = true; } return true;
       case Action::Select:     // clicking the CLEAR ALL row clears; on a fault, no-op
-        if (faultsLoaded_ && listIndex_ == n) { diag_.clearFaults(readEcu_); faultsLoaded_ = false; faults_.clear(); listIndex_ = 0; dirty_ = true; }
+        if (faultsLoaded_ && listIndex_ == n) {
+          if (readEcu_ == ecu::Airbag && !clearArmed_) { clearArmed_ = true; dirty_ = true; return true; }  // airbag: press again to confirm
+          clearArmed_ = false;
+          diag_.clearFaults(readEcu_); faultsLoaded_ = false; faults_.clear(); listIndex_ = 0; dirty_ = true;
+        }
         return true;
       case Action::Back:       screen_ = Screen::None; dirty_ = true; return true;
       default: return false;
@@ -841,7 +881,7 @@ void App::screenSelect() {
       readEcu_ = ecu::kModules[listIndex_].addr;
       storage_.putInt("diag.ecu", readEcu_); storage_.commit();  // remembered across reboots
     }
-    group_.count = 0; faultsLoaded_ = false; faults_.clear();   // stale data belongs to the old module
+    group_.count = 0; faultsLoaded_ = false; faults_.clear(); faultsOpenMs_ = now_;   // stale data belongs to the old module
     screen_ = Screen::None;
   }
   dirty_ = true;
@@ -876,10 +916,11 @@ void App::openScreen(Screen s) {
   screen_ = s; listIndex_ = 0; graph_.clear(); lastSample_ = 0; group_.count = 0;  // no stale values
   graph2_.clear(); graphHdr_.clear(); graphHdrMs_ = 0;
   scope_.reset(); scopeLocked_ = false;   // restart the rolling graph from the left
-  if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); diag_.readFaults(readEcu_, faults_); }
+  if (s == Screen::DiagFaults) { faultsLoaded_ = false; faults_.clear(); clearArmed_ = false; faultsOpenMs_ = now_; diag_.readFaults(readEcu_, faults_); }
   if (s == Screen::Phonebook || s == Screen::RecentCalls) {   // arm the empty-recall retry
     screenPullTries_ = 0; screenPullMs_ = now_;   // initial pull already fires in onMenuSelect
   }
+  if (s == Screen::Speedo) { oilDue_ = now_ - kOilEveryMs + 3000; oilStart_ = 0; }  // speed first, oil ~3s later
   if (s == Screen::DiagBoost) atmoBar_ = -1.0f;   // re-read the atmospheric baseline for the boost gauge
   dirty_ = true;
 }
@@ -987,6 +1028,20 @@ void App::syncPhonebook() {
 
 // ---- diagnostics sampling + rendering ----
 
+// The module held in the background off the gauges follows the last gauge's
+// module (engine or cluster only), so going home and back is instant instead of
+// a ~3.6s KWP reconnect each way. Persisted so a reboot holds the same one.
+void App::applyHold() {
+  if (holdEcu_ == ecu::Dashboard) diag_.setBaseRead(kSpeedoEcu, kSpeedoGroup);  // speedo cache hot
+  else                            diag_.setBaseRead(kSpeedEcu, kSpeedGroup);    // engine speed group
+}
+void App::noteGaugeEcu(uint8_t e) {
+  if (e != ecu::Engine && e != ecu::Dashboard) return;   // never hold e.g. the airbag
+  if (e == holdEcu_) return;
+  holdEcu_ = e; applyHold();
+  storage_.putInt("kwp.hold", e); storage_.commit();
+}
+
 void App::sampleDiag() {
   // TURBO gauge: fetch a real atmospheric baseline once (engine grp10 value 2)
   // before reading boost, so the gauge shows true boost = absolute MAP minus the
@@ -1005,10 +1060,35 @@ void App::sampleDiag() {
     const Preset& p = presets_.at(diagPresetIdx_);
     e = p.ecu; g = p.group; vi = p.valueIndex;
   } else if (screen_ == Screen::Speedo) {
-    e = kSpeedEcu; g = kSpeedGroup; vi = kSpeedVi;  // speed via the engine ECU
+    // Every kOilEveryMs, spend samples on ONE slow cluster group — oil temp
+    // (grp 50) and ambient (grp 2), alternating — until it answers or
+    // kOilGiveUpMs passes; group_ keeps the last speed meanwhile.
+    if (now_ - oilDue_ >= kOilEveryMs) {
+      if (oilStart_ == 0) oilStart_ = now_;
+      Group og;
+      noteGaugeEcu(kSpeedoEcu);
+      const uint8_t grp = slowAmb_ ? kAmbGroup : kOilGroup;
+      const uint8_t vi  = slowAmb_ ? kAmbVi : kOilVi;
+      bool got = diag_.readGroup(kSpeedoEcu, grp, og);
+      if (got && og.count > vi) {
+        if (slowAmb_) { ambC_ = og.values[vi].value; haveAmb_ = true; }
+        else          { oilC_ = og.values[vi].value; haveOil_ = true; }
+      }
+      if (got || now_ - oilStart_ >= kOilGiveUpMs) {
+        // Until BOTH values have been read once, go straight to the other one
+        // (no 5s wait), so a fresh boot doesn't show "--" for ambient meanwhile.
+        // Only after a successful read — a group that isn't answering must not
+        // monopolise the reads and starve the speed.
+        oilDue_ = (got && !(haveOil_ && haveAmb_)) ? now_ - kOilEveryMs : now_;
+        oilStart_ = 0; slowAmb_ = !slowAmb_;
+      }
+      return;
+    }
+    e = kSpeedoEcu; g = kSpeedoGroup; vi = kSpeedoVi;  // speed via the cluster
   } else if (screen_ == Screen::DiagGraph) {
     vi = graphVal_;                                 // user-selected value within the group
   }
+  noteGaugeEcu(e);
   if (!diag_.readGroup(e, g, group_)) return;
   if (vi < group_.count) {
     graph_.push_back(group_.values[vi].value);
@@ -1029,12 +1109,12 @@ void App::renderDiag() {
   if (screen_ == Screen::Speedo) {
     display_.beginFullScreen(true);                  // full-screen (known-good)
     int spd = 0;
-    bool haveSpeed = speedoTest_ || group_.count > kSpeedVi;
+    bool haveSpeed = speedoTest_ || group_.count > kSpeedoVi;
     if (speedoTest_) {                               // sweep 0..200..0 for on-bench checking
       int p = static_cast<int>((now_ / 50) % 402u);
       spd = p < 201 ? p : 401 - p;
     } else if (haveSpeed) {
-      spd = static_cast<int>(group_.values[kSpeedVi].value + 0.5f);
+      spd = static_cast<int>(group_.values[kSpeedoVi].value + 0.5f);
       if (spd > 0) spd += kSpeedoOffsetKmh;   // GPS-calibrated: ECU reads ~2 km/h low; keep 0 at 0
     }
     std::string l1, l2; nowPlayingLines(l1, l2);     // identical to home's top two rows
@@ -1044,14 +1124,6 @@ void App::renderDiag() {
     // When there's no speed value, fill the number area with an explicit message
     // instead of a lone (easily-dropped) "0". An empty number area was what let the
     // now-playing marquee up top look like it was scrolling in the speed's place.
-    if (!haveSpeed) {
-      display_.drawText(0, 40, kFontCentered, "NO SPEED");
-      // The background timing sweep runs when the connection is abysmal; say so, so
-      // the ~3min NO-DATA stretch reads as "working on it" rather than "frozen".
-      display_.drawText(0, 56, kFontCompressedCenter,
-                        diag_.autoTuning() ? "AUTO-TUNING KWP..." : "KWP NOT CONNECTED");
-      return;
-    }
     // Whole-number 64-wide bitmap (restored from v2.8.0, car-proven). A 64px width
     // uses the FIS GraphicFromArray path directly and renders clean; the per-digit
     // 16x28 cells that replaced it went through the narrow workspace-move path
@@ -1059,9 +1131,46 @@ void App::renderDiag() {
     // Kept small (64x20): a taller bitmap takes too long to send and starves the
     // keepalive when speed changes fast (froze the cluster). render() centers the
     // digits itself, so no leading-cell shift.
-    auto bmp = SpeedoRenderer::render(spd < 0 ? 0 : (spd > 999 ? 999 : spd), 64, 20);
+    // No reading yet (connecting to the cluster): a dash in the speed's place,
+    // same layout otherwise, so it reads as "waiting" rather than an error.
+    auto bmp = haveSpeed ? SpeedoRenderer::render(spd < 0 ? 0 : (spd > 999 ? 999 : spd), 64, 20)
+                         : SpeedoRenderer::dash(64, 20);
     display_.drawBitmap(0, 38, 64, 20, bmp.data());
     display_.drawText(44, 66, kFontCompressedLeft, "KM/H");
+    // Bottom row "OIL 35° 24° AMB": oil temp left, ambient right, in the
+    // cluster's proportional compact font, positioned from FisFont widths.
+    // Everything sits at FIXED positions so nothing shifts as values change:
+    //   "OIL " [digits, right edge at kOilEnd] [° slot] ...
+    //   ... [digits, right edge at ambEnd] [° slot] gap "AMB" (B ends on x=63)
+    // The ° is dropped (slot left blank, digits stay put) for >= 100 or < 0.
+    // Each field is an overlay that clears only its own strip, plus a rect for
+    // the strip left of the right-justified digits; the rect's width changes
+    // with the value, so the differ resends it exactly when digits move.
+    // (Two plain drawTexts on a row wipe each other; fixed 5px cells spaced
+    // the proportional glyphs badly; the cluster's own right-align was 4-5px off.)
+    auto deg = [](float c) { return static_cast<int>(c + (c < 0 ? -0.5f : 0.5f)); };
+    const char* kDeg = "\xC2\xB0";                     // UTF-8 ° -> FIS 0xBB
+    auto field = [&](bool have, float c, int lo, int end, int hi) {
+      char d[8], t[12];
+      int v = deg(c);
+      bool showDeg = have && v >= 0 && v < 100;
+      if (have) std::snprintf(d, sizeof(d), "%d", v); else std::snprintf(d, sizeof(d), "--");
+      int x = end - fisCompactWidth(d);
+      if (x < lo) x = lo;                                // 3-digit oil: needs the ° slot's room
+      std::snprintf(t, sizeof(t), "%s%s", d, showDeg ? kDeg : "");
+      if (x > lo) display_.fillRect(static_cast<uint8_t>(lo), 78, static_cast<uint8_t>(x - lo), 7, false);
+      display_.drawTextOverlay(static_cast<uint8_t>(x), 78, kFontCompressedLeft, static_cast<uint8_t>(hi - x), t);
+    };
+    static const char* kOilLbl = "OIL ";
+    static const char* kAmbLbl = "AMB";
+    const int oilLo  = fisCompactWidth(kOilLbl);                      // 15: value starts after "OIL "
+    const int oilEnd = oilLo + 2 * 5;                                 // 2-digit field (digits are 5px)
+    const int ambX   = 65 - fisCompactWidth(kAmbLbl);                 // 49: "AMB" so B ends on x=63
+    const int ambEnd = ambX - 2 - kFisDegreeW;                        // 43: digits, ° slot, 2px gap, AMB
+    display_.drawTextOverlay(0, 78, kFontCompressedLeft, static_cast<uint8_t>(oilLo), kOilLbl);
+    field(haveOil_, oilC_, oilLo, oilEnd, oilEnd + kFisDegreeW + 2);
+    field(haveAmb_, ambC_, 33, ambEnd, ambX);
+    display_.drawTextOverlay(static_cast<uint8_t>(ambX), 78, kFontCompressedLeft, static_cast<uint8_t>(64 - ambX), kAmbLbl);
     return;
   }
 
@@ -1069,7 +1178,11 @@ void App::renderDiag() {
     display_.beginFullScreen(true);
     int n = static_cast<int>(faults_.size());
     display_.drawText(0, 0, kFontCentered, "FAULTS");
-    if (!faultsLoaded_) { display_.drawText(0, 10, kFontCentered, "READING..."); return; }
+    if (!faultsLoaded_) {
+      display_.drawText(0, 10, kFontCentered, "READING...");
+      if (now_ - faultsOpenMs_ > 15000) display_.drawText(0, 30, kFontCompressedCenter, "NOT ANSWERING");  // still retrying
+      return;
+    }
     if (faults_.empty()) { display_.drawText(0, 10, kFontCentered, "NONE FOUND"); return; }
 
     // Header line 2 = position (replaces a scrollbar bitmap, which forced a full
@@ -1087,7 +1200,7 @@ void App::renderDiag() {
     for (int r = 0; r < visible && start + r < total; ++r) {
       int i = start + r;
       if (i < n) std::snprintf(l, sizeof(l), " %05u%s", faults_[i].code, faults_[i].sporadic ? " *" : "");
-      else       std::snprintf(l, sizeof(l), " CLEAR ALL");
+      else       std::snprintf(l, sizeof(l), clearArmed_ ? " CONFIRM CLR" : " CLEAR ALL");
       display_.drawText(0, static_cast<uint8_t>(listTop + r * rowH),
                         i == listIndex_ ? (kFontCompressedLeft | kFontHighlight) : kFontCompressedLeft, l);
     }
@@ -1276,16 +1389,19 @@ void App::renderDiag() {
     const char* lbl = (readEcu_ == ecu::Engine && screen_ == Screen::DiagReadGroup)
                           ? engineFieldLabel(readGroup_, i) : nullptr;
     display_.drawText(0, static_cast<uint8_t>(y), kFontCompressedLeft, lbl ? lbl : group_.values[i].label.c_str()); // label (static -> not resent)
-    // Value: LEFT-aligned, and drawn as one fixed-slot overlay PER CHARACTER. The
-    // frame differ then resends only the character cells that actually changed —
-    // unchanged digits AND the units stay untouched (no full-row rewrite, so no
-    // flicker). Trailing cells are blanked with spaces so a shrinking value leaves
-    // no leftover digits.
+    // Value: RIGHT-aligned (flush to the screen edge, label stays left), drawn as
+    // one fixed-slot overlay PER CHARACTER. The frame differ then resends only the
+    // character cells that actually changed — the units and unchanged digits stay
+    // put (no full-row rewrite, so no flicker). Leading cells are blanked with
+    // spaces so a shrinking value leaves no leftover digits.
     std::string val = fmt(group_.values[i]);
+    if (static_cast<int>(val.size()) > kValCells) val.resize(kValCells);
+    const int pad = kValCells - static_cast<int>(val.size());
+    const int x0 = 64 - kValCells * 5;   // last cell ends on the right edge
     int vy = y + kLineH;
     for (int c = 0; c < kValCells; ++c) {
-      char cell[2] = { c < static_cast<int>(val.size()) ? val[c] : ' ', 0 };
-      display_.drawTextOverlay(static_cast<uint8_t>(c * 5), static_cast<uint8_t>(vy), kFontCompressedLeft, 5, cell);
+      char cell[2] = { c >= pad ? val[c - pad] : ' ', 0 };
+      display_.drawTextOverlay(static_cast<uint8_t>(x0 + c * 5), static_cast<uint8_t>(vy), kFontCompressedLeft, 5, cell);
     }
   }
 }
@@ -1477,7 +1593,11 @@ void App::renderScreen() {
   if (screen_ == Screen::WifiInfo || screen_ == Screen::UpdateInfo) {
     bool upd = screen_ == Screen::UpdateInfo;
     display_.drawText(0, 0, kFontCentered, upd ? "UPDATE" : "WIFI");
+    // While/after a pull-update, show its live status (stage, %, versions,
+    // or the failure reason) instead of the static upload hints.
+    std::string st = (upd && sys_) ? sys_->updateStatus() : std::string();
     std::string info = !sys_ ? std::string("N/A")
+                     : !st.empty() ? st
                      : (upd ? sys_->updateInfo() : sys_->wifiInfo());
     int row = 0; size_t pos = 0;
     while (pos <= info.size() && row < 6) {
@@ -1488,7 +1608,8 @@ void App::renderScreen() {
       if (nl == std::string::npos) break;
       pos = nl + 1;
     }
-    if (upd && sys_) display_.drawText(0, 70, kFontCompressedLeft, "SEL=PULL UPDATE");
+    if (upd && sys_ && st.empty())      display_.drawText(0, 70, kFontCompressedLeft, "SEL=PULL UPDATE");
+    else if (upd && sys_ && sys_->updating()) display_.drawText(0, 70, kFontCompressedLeft, "PLEASE WAIT...");
     return;
   }
   // Phonebook shows WHICH phone the contacts belong to; RecentCalls is labelled.

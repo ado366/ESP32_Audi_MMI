@@ -30,6 +30,7 @@ inline unsigned char fisRomCode(uint32_t cp) {
     case 0x0148: case 0x0147: return 0x8A;  // ň Ň
     case 0x010F: case 0x010E: return 0xDE;  // ď Ď  (ROM has lowercase only)
     case 0x016F: case 0x016E: return 0x98;  // ů Ů
+    case 0x00B0:              return 0xBB;  // ° degree sign (TLBFISLib ISO-8859-1 table)
     default: return 0;
   }
 }

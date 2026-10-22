@@ -26,12 +26,23 @@ public:
   }
 
   bool isConnected() const override { return connected_; }
-  std::string kwpDebug() const { return std::string(kwp_.dbg.c_str()); }  // connect-flow trace
+  std::string kwpDebug() const { return std::string(kwp_.dbg.c_str()) + "last block: " + kwp_.lastRaw.c_str() + "\n--- connect history ---\n" + kwp_.connHist.c_str(); }  // connect-flow trace
   uint32_t readCount() const { return reads_; }                            // total measuring-block reads
   void requestProbe(int rx = -1, int tx = -1) { probeRx_ = rx; probeTx_ = tx; probeReq_ = true; }
   // Non-invasive ISO 14230 fast-init probe on the given ECU; result at /kwpdbg.
   void requestFastInit(uint8_t ecu = 0x01) { fastInitEcu_ = ecu; fastInitReq_ = true; }
   void requestRead(uint8_t ecu, uint8_t group) { reqEcu_ = ecu; reqGroup_ = group; }  // debug: trigger connect+read
+  // Live module-switch knobs for on-car A/B (/kwpswitch): end-session on/off, idle ms.
+  void setSwitchOpts(int sendEnd, int idleMs, int otherIdleMs = -1) { if (sendEnd >= 0) sendEnd_ = sendEnd != 0; if (idleMs >= 0) switchIdleMs_ = idleMs; if (otherIdleMs >= 0) switchIdleOtherMs_ = otherIdleMs; }
+  std::string switchOpts() const { char b[64]; snprintf(b, sizeof(b), "end=%d idle=%dms oidle=%dms", sendEnd_ ? 1 : 0, (int)switchIdleMs_, (int)switchIdleOtherMs_); return b; }
+  // Engine group scan (debug): reads every engine group 1..255 once and keeps the
+  // raw (formula,a,b) triples — to hunt for a field (e.g. oil temp). /kwpscan.
+  void requestScan() { scanReq_ = true; }
+  std::string scanLog() const {
+    std::string r;
+    if (mtx_ && xSemaphoreTake(mtx_, portMAX_DELAY) == pdTRUE) { r = scanOut_.c_str(); xSemaphoreGive(mtx_); }
+    return r;
+  }
 
   bool readGroup(uint8_t ecuAddr, uint8_t group, Group& out) override {
     reqEcu_ = ecuAddr; reqGroup_ = group;      // hand the request to the task
@@ -47,12 +58,17 @@ public:
     faultEcu_ = ecuAddr; faultReq_ = true;       // task performs it off the UI core
     bool ok = false;
     if (mtx_ && xSemaphoreTake(mtx_, 0) == pdTRUE) {
-      if (faultsReady_) { out = faults_; ok = true; }
+      if (faultsReady_ && faultsFrom_ == ecuAddr) { out = faults_; ok = true; }   // never another module's list
       xSemaphoreGive(mtx_);
     }
     return ok;
   }
-  bool clearFaults(uint8_t ecuAddr) override { faultEcu_ = ecuAddr; clearReq_ = true; return true; }
+  bool clearFaults(uint8_t ecuAddr) override {
+    // Drop the cached list now, so the UI's next poll can't re-show the
+    // pre-clear faults while the task is still getting to the clear.
+    if (mtx_ && xSemaphoreTake(mtx_, portMAX_DELAY) == pdTRUE) { faultsReady_ = false; faults_.clear(); xSemaphoreGive(mtx_); }
+    faultEcu_ = ecuAddr; clearReq_ = true; return true;
+  }
   void setTiming(int initBitMs, int interByteMs, int blockDelayMs) override {
     kwp_.setTiming(initBitMs, interByteMs, blockDelayMs);
   }
@@ -124,7 +140,17 @@ private:
 
   bool ensureConnected(uint8_t addr) {
     if (kwp_.isConnected() && kwp_.getCurrAddr() == addr) { connected_ = true; return true; }
-    if (kwp_.isConnected()) kwp_.disconnect();
+    // Switching modules needs a longer quiet K-line than ISO's 300ms. On-car A/B
+    // (2026-10-22, 3 rounds each, end-session OFF): 300ms failed the first
+    // attempt every time both ways ("no reply"); to the CLUSTER 700ms+ was 3/3
+    // first-try; to the ENGINE 700/1000ms were 0/3, 1500ms 3/3. A failed first
+    // try costs ~4.3s + a 2.5s backoff, so the wait pays for itself.
+    int idleMs = 300;
+    if (kwp_.isConnected() && kwp_.getCurrAddr() != addr)
+      idleMs = (addr == kEngine) ? switchIdleMs_ : switchIdleOtherMs_;
+    // End-communication (0x06) is OFF by default: with it the next ENGINE connect
+    // got a garbled sync ("bad magic B5 AB CF") on the first try, every time.
+    if (kwp_.isConnected()) { if (sendEnd_) kwp_.endSession(); else kwp_.disconnect(); }
     // Engine ECU: TRY ISO 14230 fast-init / KWP2000 first (far cheaper connect,
     // no 5-baud timing fragility). If the ECU doesn't answer fast-init after a few
     // tries, lock to KWP1281 for the rest of this boot and fall through to the
@@ -146,7 +172,7 @@ private:
     // attempts always miss. The caller's retry delay provides the quiet gap;
     // a success pins this address's baud for future reconnects.
     int baud = baud9600_[addr] ? 9600 : 10400;
-    connected_ = kwp_.connect(addr, baud);    // blocking init — off the UI core
+    connected_ = kwp_.connect(addr, baud, idleMs);    // blocking init — off the UI core
     // Baud handling that survives a noisy K-line (engine running):
     //  * The moment the sync byte (0x55 01 8A) matches at some baud, that baud is
     //    PROVEN for this address — lock it and never probe the other rate again.
@@ -256,7 +282,7 @@ private:
       if (clearReq_ || faultReq_) {
         uint8_t fe = faultEcu_;
         if (ensureConnected(fe)) {
-          if (clearReq_) { kwp_.clearFaultCodes(); clearReq_ = false; faultsReady_ = false; }
+          if (clearReq_) { kwp_.clearFaultCodes(); clearReq_ = false; faultsReady_ = false; faultReq_ = true; }  // re-read right after
           else {
             uint16_t codes[16]; uint8_t infos[16];
             int nf = kwp_.readFaultCodes(codes, infos, 16);
@@ -266,7 +292,7 @@ private:
               tmp.push_back(d);
             }
             if (xSemaphoreTake(mtx_, portMAX_DELAY) == pdTRUE) {
-              faults_ = tmp; faultsReady_ = (nf >= 0); xSemaphoreGive(mtx_);
+              faults_ = tmp; faultsFrom_ = fe; faultsReady_ = (nf >= 0); xSemaphoreGive(mtx_);
             }
             faultReq_ = false;
           }
@@ -275,6 +301,8 @@ private:
       }
 
       if (search_.active()) { runSearchStep(); continue; }   // deep sweep owns the K-line while running
+
+      if (scanReq_) { runScan(); continue; }
 
       // Default to HOLDING the engine (base ECU) whenever nothing else is being
       // read: connect it at startup and keep it alive on every screen, so a gauge
@@ -312,6 +340,22 @@ private:
     }
   }
 
+  void runScan() {
+    String out = "engine group scan (raw formula,a,b)\n";
+    for (int g = 1; g <= 255 && !serviceMode_; ++g) {
+      if (!ensureConnected(kEngine)) { backoffCold(); if (!ensureConnected(kEngine)) { out += "g" + String(g) + ": no connect\n"; continue; } }
+      SENSOR w[16];
+      int n = kwp_.readBlock(kEngine, g, 16, w);
+      if (n > 0) { ++reads_; out += kwp_.lastRaw.substring(3) + "\n"; }
+      else out += "g" + String(g) + ": no data\n";
+      if (xSemaphoreTake(mtx_, portMAX_DELAY) == pdTRUE) { scanOut_ = out + "(scanning...)\n"; xSemaphoreGive(mtx_); }
+    }
+    if (xSemaphoreTake(mtx_, portMAX_DELAY) == pdTRUE) { scanOut_ = out + "(done)\n"; xSemaphoreGive(mtx_); }
+    scanReq_ = false;
+  }
+  volatile bool scanReq_ = false;
+  String scanOut_;
+
   mutable KWP kwp_{static_cast<uint8_t>(cfg::PIN_KWP_RX), static_cast<uint8_t>(cfg::PIN_KWP_TX)};
   SemaphoreHandle_t mtx_ = nullptr;
   TaskHandle_t task_ = nullptr;
@@ -337,10 +381,14 @@ private:
   // Per-address protocol selection: try fast-init/KWP2000 for the engine first,
   // fall back to KWP1281 if it doesn't answer after a few tries (this boot).
   static constexpr uint8_t kEngine = 0x01;
+  volatile int  switchIdleMs_ = 1500;      // quiet K-line before the ENGINE after a module switch
+  volatile int  switchIdleOtherMs_ = 700;  // ... before any other module (cluster) after a switch
+  volatile bool sendEnd_ = false;          // send KWP1281 end-communication (0x06) on a switch
   enum { kProtoUnknown = 0, kProto1281 = 1, kProto2000 = 2, kProtoObd2 = 3 };
   static constexpr int kFastInitTries = 3;
   uint8_t proto_[256] = {kProtoUnknown};
   uint8_t fastFails_[256] = {0};
+  volatile uint8_t faultsFrom_ = 0;   // module the cached faults_ list was read from
   volatile bool faultReq_ = false, clearReq_ = false, faultsReady_ = false, probeReq_ = false;
   volatile bool fastInitReq_ = false;
   volatile uint8_t fastInitEcu_ = 0x01;

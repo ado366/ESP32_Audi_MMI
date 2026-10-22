@@ -134,6 +134,16 @@ private:
   bool               speedoTest_ = false;    // speedo bench-test sweep 0..200
   int                adaptInit_ = 200;       // KWP 5-baud bit period (ms), persisted
   int                adaptByte_ = 10;        // KWP inter-byte W4 (ms), persisted (10 = extra margin on noisy running-engine K-line)
+  uint32_t           faultsOpenMs_ = 0;      // when the faults screen started reading (for NOT ANSWERING)
+  uint8_t            holdEcu_ = 0x01;        // module held off-gauge (engine 0x01 / cluster 0x17)
+  std::string        lastUpdStatus_;         // last pull-update status drawn (repaint on change)
+  bool               clearArmed_ = false;    // airbag CLEAR ALL pressed once, awaiting confirm
+  float              oilC_ = 0.f;            // cluster grp50 oil temp, shown on the speedo
+  bool               haveOil_ = false;
+  float              ambC_ = 0.f;            // cluster grp2 v4 ambient temp, shown on the speedo
+  bool               haveAmb_ = false;
+  bool               slowAmb_ = false;       // which slow group the speedo reads next (oil / ambient)
+  uint32_t           oilDue_ = 0, oilStart_ = 0;   // last oil read / current oil-read attempt start
   float              atmoBar_ = -1.0f;       // cached atmospheric pressure (engine grp10 v2), for true boost; <0 = not read yet
   int                adaptFrame_ = 0;        // KWP inter-frame W3 (ms), persisted
   int                adaptField_ = 0;        // which field the Adapt screen edits (0/1/2)
@@ -199,7 +209,30 @@ private:
   bool navReady() { if (now_ - lastNav_ < kNavCooldownMs) return false; lastNav_ = now_; return true; }
   // Remember the last group picked in READ GROUP / GRAPH VALUE so reopening the
   // screen returns to it instead of resetting to group 2.
+  void applyHold();
+  void noteGaugeEcu(uint8_t e);
   void saveDiagGroup() { storage_.putInt("diag.group", readGroup_); storage_.commit(); }
+  // Group scrolling with acceleration. The encoder reports a fast spin as one
+  // event carrying several detents (groupDetents_), and consecutive spin events
+  // arrive ~300ms apart. A lone slow tick moves exactly 1; a multi-detent event
+  // or a quick run of events (each within kGroupAccelMs, same direction)
+  // multiplies the move by 2, 5, then 10. Clamped to the KWP group range 1..255.
+  uint32_t lastGroupStep_ = 0;
+  int      groupStreak_ = 0;
+  int      groupDir_ = 0;
+  int      groupDetents_ = 1;
+  static constexpr uint32_t kGroupAccelMs = 450;
+  void stepGroup(int dir) {
+    if (dir == groupDir_ && now_ - lastGroupStep_ < kGroupAccelMs) ++groupStreak_;
+    else groupStreak_ = 0;
+    groupDir_ = dir; lastGroupStep_ = now_;
+    const int d = groupDetents_ < 1 ? 1 : groupDetents_;
+    const int speed = groupStreak_ + (d - 1) * 2;   // detents per event weigh in too
+    const int mult = speed < 2 ? 1 : speed < 5 ? 2 : speed < 9 ? 5 : 10;
+    int g = static_cast<int>(readGroup_) + dir * d * mult;
+    readGroup_ = static_cast<uint8_t>(g < 1 ? 1 : g > 255 ? 255 : g);
+    saveDiagGroup();
+  }
   static constexpr int kWin = 8;
   static constexpr uint8_t kGaugeTop = 24;  // lower HALFSCREEN band origin (matches Esp32Display kHalfTop)
   static constexpr int kGraphW = 64;
